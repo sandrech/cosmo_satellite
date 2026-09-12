@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { HttpSimulationGateway } from "../../shared/api/client";
+import { scenarioToJson } from "../../shared/api/scenarios";
 import { useAppState } from "../../shared/model/store";
 
 function download(name: string, value: unknown) {
@@ -22,7 +23,7 @@ export function ExportDialog() {
       {open && (
         <div className="export-menu">
           <strong>Выгрузить JSON</strong>
-          <button onClick={() => download("scenario.json", scenario.canonical)}>Сценарий cosmo-A-1.0</button>
+          <button onClick={() => download("scenario.json", scenarioToJson(scenario))}>Сценарий cosmo-A-1.0</button>
           <button disabled={busy} onClick={async () => {
             setBusy(true); setError(null);
             try {

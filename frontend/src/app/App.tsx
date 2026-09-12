@@ -39,14 +39,6 @@ export default function App() {
               <span>{PAGE_LABELS[id]}</span>
             </button>
           ))}
-          <button
-            className="workbench-tab-add"
-            type="button"
-            title="Новая вкладка"
-            aria-label="Новая вкладка"
-          >
-            +
-          </button>
         </nav>
       </header>
 
