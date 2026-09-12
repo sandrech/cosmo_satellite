@@ -17,70 +17,41 @@ _LINK_KIND = {
 
 
 def from_network_projection(projection: NetworkProjection) -> StaticNetwork:
-    """Adapt a topology projection and preserve the visibility implied by ground links.
+    """Adapt neutral spatial facts to the static network model.
 
-    The exact elevation angle is unavailable in ``NetworkProjection``; callers that
-    need it for UI/explanation should adapt the full :class:`SpatialSnapshot`.
+    Raw ground observations are used to preserve elevation on direct links even if
+    a future GroundLinkPolicy is intentionally different from geometric visibility.
+    Relay semantics are not transported from spatial3d; the static reachability
+    policy owns them.
     """
-    nodes = tuple(
-        Node(node.id, _NODE_KIND[node.kind], node.available, node.relay_allowed)
-        for node in projection.nodes
+
+    nodes = tuple(Node(node.id, _NODE_KIND[node.kind], node.available) for node in projection.nodes)
+    observation_by_pair = {
+        (item.ground_id, item.satellite_id): item
+        for item in projection.ground_observations
+    }
+    ground_ids = {
+        node.id for node in projection.nodes if node.kind in (NetworkNodeKind.CLIENT, NetworkNodeKind.GATEWAY)
+    }
+    links: list[Link] = []
+    for edge in projection.edges:
+        elevation: float | None = None
+        if edge.kind == ContactKind.GROUND_SATELLITE:
+            ground_id, satellite_id = (
+                (edge.a, edge.b) if edge.a in ground_ids else (edge.b, edge.a)
+            )
+            observation = observation_by_pair.get((ground_id, satellite_id))
+            elevation = observation.elevation_deg if observation is not None else None
+        links.append(Link(edge.a, edge.b, edge.distance_km, _LINK_KIND[edge.kind], elevation))
+
+    visibility = tuple(
+        GroundVisibility(item.ground_id, item.satellite_id, item.elevation_deg, item.distance_km)
+        for item in projection.ground_visibility
     )
-    kinds = {node.id: node.kind for node in nodes}
-    links = tuple(
-        Link(edge.a, edge.b, edge.distance_km, _LINK_KIND[edge.kind])
-        for edge in projection.edges
-    )
-    visibility: list[GroundVisibility] = []
-    for link in links:
-        if link.kind != LinkKind.GROUND_SATELLITE:
-            continue
-        if kinds[link.a] == NodeKind.SATELLITE:
-            ground_id, satellite_id = link.b, link.a
-        else:
-            ground_id, satellite_id = link.a, link.b
-        visibility.append(GroundVisibility(ground_id, satellite_id, None, link.distance_km))
-    return StaticNetwork(nodes, links, tuple(visibility))
+    return StaticNetwork(nodes, tuple(links), visibility)
 
 
 def from_spatial_snapshot(snapshot: SpatialSnapshot) -> StaticNetwork:
-    """Create the full time-agnostic graph input while preserving visibility facts."""
-    projection = project_network(snapshot)
-    nodes = tuple(
-        Node(node.id, _NODE_KIND[node.kind], node.available, node.relay_allowed)
-        for node in projection.nodes
-    )
+    """Create the time-agnostic graph input while preserving coverage and link observations."""
 
-    observations = {
-        (observation.ground_id, observation.satellite_id): observation
-        for observation in snapshot.ground_observations
-    }
-    ground_ids = {site.id for site in snapshot.ground_sites}
-    links: list[Link] = []
-    for contact in snapshot.contacts:
-        elevation: float | None = None
-        if contact.kind == ContactKind.GROUND_SATELLITE:
-            ground_id, satellite_id = (
-                (contact.a, contact.b) if contact.a in ground_ids else (contact.b, contact.a)
-            )
-            observation = observations.get((ground_id, satellite_id))
-            elevation = observation.elevation_deg if observation is not None else None
-        links.append(Link(
-            contact.a,
-            contact.b,
-            contact.distance_km,
-            _LINK_KIND[contact.kind],
-            elevation,
-        ))
-
-    visibility = tuple(
-        GroundVisibility(
-            observation.ground_id,
-            observation.satellite_id,
-            observation.elevation_deg,
-            observation.distance_km,
-        )
-        for observation in snapshot.ground_observations
-        if observation.geometrically_visible
-    )
-    return StaticNetwork(nodes, tuple(links), visibility)
+    return from_network_projection(project_network(snapshot))

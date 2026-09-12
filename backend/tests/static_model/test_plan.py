@@ -29,8 +29,8 @@ def test_analysis_plan_controls_route_strategies_and_failure_ranking() -> None:
     network = StaticNetwork(
         nodes=(
             Node("C", NodeKind.CLIENT),
-            Node("S1", NodeKind.SATELLITE, True, True),
-            Node("S2", NodeKind.SATELLITE, True, True),
+            Node("S1", NodeKind.SATELLITE, True),
+            Node("S2", NodeKind.SATELLITE, True),
             Node("G", NodeKind.GATEWAY),
         ),
         links=(

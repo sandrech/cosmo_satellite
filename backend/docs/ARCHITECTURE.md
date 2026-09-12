@@ -19,8 +19,11 @@ Rules:
 
 1. `json_component` is persistence infrastructure and imports no domain component.
 2. `spatial3d` is mathematical/spatial infrastructure and imports no persistence, UI,
-   static-graph, or routing component.
-3. `cosmo_a_json` is the persistence-to-spatial adapter for the supplied case schema.
+   static-graph, or routing component. Geometry observations, direct-link decisions and
+   end-to-end routing are separate layers.
+3. `cosmo_a_json` is the persistence-to-spatial adapter for the supplied case schema; it also
+   constructs the case-specific `CircularOrbitTrajectory`, so circular-orbit fields do not leak
+   into the generic `SpatialSpecification`.
 4. `static_model` has no clock, orbital mechanics, JSON, or UI dependency. It analyses one
    frozen network state.
 5. `spatial_static_adapter` is the only package that knows both spatial network projections

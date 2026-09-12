@@ -13,7 +13,7 @@ def test_all_case_files_load_through_json_adapter_and_build_model() -> None:
         loaded = store.load(path)
         assert isinstance(loaded, JsonOk), (path, loaded)
         adapted = adapt_scenario(loaded.value)
-        model = SpatialModel.create(adapted.spatial)
+        model = SpatialModel.create(adapted.spatial, adapted.trajectory)
         assert isinstance(model, SpatialOk), (path, model)
 
 

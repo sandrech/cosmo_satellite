@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from .math3d import Vec3
 from .specification import GroundRole
-from .state import ContactKind, SpatialSnapshot
+from .state import ContactKind, CoordinateFrame, SpatialSnapshot
 
 
 class NetworkNodeKind(StrEnum):
@@ -19,7 +19,6 @@ class NetworkNode:
     id: str
     kind: NetworkNodeKind
     available: bool
-    relay_allowed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +30,28 @@ class NetworkEdge:
 
 
 @dataclass(frozen=True, slots=True)
+class NetworkGroundObservation:
+    ground_id: str
+    satellite_id: str
+    elevation_deg: float
+    distance_km: float
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkGroundVisibility:
+    ground_id: str
+    satellite_id: str
+    elevation_deg: float
+    distance_km: float
+
+
+@dataclass(frozen=True, slots=True)
 class NetworkProjection:
     t_s: float
     nodes: tuple[NetworkNode, ...]
     edges: tuple[NetworkEdge, ...]
+    ground_observations: tuple[NetworkGroundObservation, ...]
+    ground_visibility: tuple[NetworkGroundVisibility, ...]
 
 
 class ScenePointKind(StrEnum):
@@ -50,6 +67,7 @@ class ScenePoint:
     kind: ScenePointKind
     earth_fixed_km: Vec3
     available: bool
+    trajectory_group_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,24 +81,51 @@ class SceneSegment:
 @dataclass(frozen=True, slots=True)
 class SceneFrame:
     t_s: float
+    coordinate_frame: CoordinateFrame
     body_radius_km: float
     points: tuple[ScenePoint, ...]
     contacts: tuple[SceneSegment, ...]
 
 
 def project_network(snapshot: SpatialSnapshot) -> NetworkProjection:
+    """Project spatial facts without embedding routing semantics.
+
+    In particular, this projection does not decide which node kinds may relay.
+    That belongs to the consumer's reachability/routing policy.
+    """
+
     nodes: list[NetworkNode] = [
-        NetworkNode(satellite.id, NetworkNodeKind.SATELLITE, satellite.active, True)
+        NetworkNode(satellite.id, NetworkNodeKind.SATELLITE, satellite.active)
         for satellite in snapshot.satellites
     ]
     for site in snapshot.ground_sites:
         kind = NetworkNodeKind.CLIENT if site.role == GroundRole.CLIENT else NetworkNodeKind.GATEWAY
-        nodes.append(NetworkNode(site.id, kind, site.available, False))
+        nodes.append(NetworkNode(site.id, kind, site.available))
     edges = tuple(NetworkEdge(contact.a, contact.b, contact.distance_km, contact.kind) for contact in snapshot.contacts)
-    return NetworkProjection(snapshot.t_s, tuple(nodes), edges)
+    observations = tuple(
+        NetworkGroundObservation(
+            item.ground_id,
+            item.satellite_id,
+            item.elevation_deg,
+            item.distance_km,
+        )
+        for item in snapshot.ground_observations
+    )
+    visibility = tuple(
+        NetworkGroundVisibility(
+            item.ground_id,
+            item.satellite_id,
+            item.elevation_deg,
+            item.distance_km,
+        )
+        for item in snapshot.ground_visibility
+    )
+    return NetworkProjection(snapshot.t_s, tuple(nodes), edges, observations, visibility)
 
 
-def project_scene(snapshot: SpatialSnapshot, *, body_radius_km: float) -> SceneFrame:
+def project_scene(snapshot: SpatialSnapshot) -> SceneFrame:
+    """Create a UI-neutral scene using the snapshot's own reference-frame metadata."""
+
     points: list[ScenePoint] = [
         ScenePoint(
             satellite.id,
@@ -88,6 +133,7 @@ def project_scene(snapshot: SpatialSnapshot, *, body_radius_km: float) -> SceneF
             ScenePointKind.SATELLITE,
             satellite.position.earth_fixed_km,
             satellite.active,
+            satellite.trajectory_group_id,
         )
         for satellite in snapshot.satellites
     ]
@@ -98,4 +144,10 @@ def project_scene(snapshot: SpatialSnapshot, *, body_radius_km: float) -> SceneF
         SceneSegment(contact.a, contact.b, contact.distance_km, contact.kind)
         for contact in snapshot.contacts
     )
-    return SceneFrame(snapshot.t_s, body_radius_km, tuple(points), contacts)
+    return SceneFrame(
+        snapshot.t_s,
+        snapshot.reference_frame.coordinate_frame,
+        snapshot.reference_frame.body_radius_km,
+        tuple(points),
+        contacts,
+    )

@@ -21,7 +21,7 @@ def build(*, nodes: tuple[Node, ...], links: tuple[Link, ...], components: Stati
 
 
 def sat(node_id: str) -> Node:
-    return Node(node_id, NodeKind.SATELLITE, True, True)
+    return Node(node_id, NodeKind.SATELLITE, True)
 
 
 def test_gateways_and_other_clients_are_not_transit_nodes() -> None:

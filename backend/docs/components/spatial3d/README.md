@@ -1,101 +1,61 @@
-# 3D spatial model component
+# Spatial 3D model
 
-This bundle contains two deliberately separated pieces:
+`spatial3d` is an independent mathematical component. It imports no JSON/Pydantic, graph
+library, UI toolkit or NumPy. The `cosmo_a_json` package is the adapter from the supplied
+persistence schema into the generic spatial specification plus the reference circular
+trajectory provider.
 
-- `core/` — independent mathematical/spatial component. It has **no JSON, Pydantic, UI, graph library, or NumPy dependency**.
-- `adapters/cosmo_a_json/` — integration adapter for the supplied `cosmo-A-1.0` JSON format. It depends on the earlier `JSON component` component and converts the parsed DTO into the core `SpatialSpecification`.
+## What the component returns
 
-The split is intentional. Later the preferred path can become
+`SpatialModel.snapshot(t_s)` produces a self-contained `SpatialSnapshot` with:
 
-`JSON -> static model -> SpatialSpecification -> SpatialModel`
+- satellite positions and active state;
+- ground positions and availability;
+- raw ground observations (`distance`, `elevation`);
+- geometric ground visibility as a separate fact;
+- raw ISL observations for candidate pairs;
+- currently allowed direct contacts;
+- Earth-fixed reference-frame metadata including body radius.
 
-without changing `spatial3d` itself.
+The distinction between an observation and an allowed contact is intentional. For example, a
+satellite may remain geometrically visible while a future radio/link-budget policy rejects the
+direct network link.
 
-## Mathematical contract
+## Reference case implementation
 
-The default components implement the formulas from the supplied **Описание данных** document:
+The default policies reproduce the supplied model exactly:
 
-- spherical body with `R = 6371 km`;
-- circular orbit with `mu = 398600.435507 km^3/s^2`;
-- body rotation period `T = 86164.09054 s`;
-- ECI orbit coordinates from RAAN, inclination and argument `slot + phase + n*t`;
-- the documented ECI -> Earth-fixed rotation;
-- spherical ground coordinates from latitude/longitude;
-- ground visibility at `elevation >= min_elevation_deg`;
-- ISL only when distance is **strictly** below `isl_range_km` and the segment clears the body **strictly** above `R`;
-- satellite outage intervals are `[start_s, end_s)`;
-- an unavailable satellite keeps its calculated position but is excluded from contacts;
-- gateway outages remove gateway contacts while clients remain available.
+- spherical Earth;
+- circular orbit equations from RAAN/inclination/slot/phase;
+- documented ECI -> Earth-fixed rotation;
+- visibility at `elevation >= min_elevation_deg`;
+- ISL at strict range `< isl_range_km` and strict Earth clearance `> R`;
+- `[start_s, end_s)` satellite/gateway outages;
+- unavailable satellites retain positions but do not participate in contacts.
 
-The component computes continuous-time snapshots. The 120 s grid and 24 h horizon belong to the later dynamic/simulation component, not to 3D geometry.
+The circular representation is **not** part of `SpatialSpecification`. It is owned by
+`CircularOrbitTrajectory`, so another trajectory provider can use another representation
+without forcing RAAN/slot fields into every spatial model.
 
-## Replaceable policies
+## Replaceable pieces
 
-`SpatialModel` is assembled from `SpatialComponents`:
+`SpatialComponents` controls ground geometry, availability, observation, visibility, direct-link
+policies and satellite-pair candidate generation. `SatelliteTrajectoryProvider` is supplied
+separately because it owns trajectory-specific data as well as behavior.
 
-- `SatelliteKinematics`
-- `GroundGeometry`
-- `SatelliteAvailabilityPolicy`
-- `GroundAvailabilityPolicy`
-- `GroundContactPolicy`
-- `InterSatelliteContactPolicy`
-- `SatellitePairSource`
+The downstream static graph component receives `project_network(snapshot)` through
+`spatial_static_adapter`. Spatial projections contain no relay/routing decision. The future 3D
+UI receives `project_scene(snapshot)` and does not need orbital formulas.
 
-For example, changing what “a direct ISL is reachable” means only requires another `InterSatelliteContactPolicy`. Changing from circular analytical orbits to SGP4 requires another `SatelliteKinematics`. Restricting candidate ISLs to selected neighbours requires another `SatellitePairSource`.
+## Verification
 
-## Boundaries to other components
-
-The core returns `SpatialSnapshot`. It does not construct routes and does not render UI.
-
-Two pure projections are provided:
-
-- `project_network(snapshot)` -> node/edge view for a future graph/routing component. Ground nodes are explicitly `relay_allowed=False`.
-- `project_scene(snapshot, body_radius_km=...)` -> Earth-fixed points and contact segments suitable for a 3D/UI adapter.
-
-Neither projection imports a graph or rendering framework.
-
-## Install and test
-
-First install the previous JSON component (r2) if you want the `cosmo-A` adapter:
+From `backend/`:
 
 ```bash
-python -m pip install -e /path/to/backend
+python -m pip install -e '.[dev]'
+pytest
+python tools/verify_against_case_reference.py /path/to/case/files
 ```
 
-Then:
-
-```bash
-python -m pip install -e './core[test]'
-python -m pip install -e './adapters/cosmo_a_json[test]'
-pytest core/tests
-pytest adapters/cosmo_a_json/tests
-```
-
-The core can be installed and used without the JSON adapter:
-
-```bash
-python -m pip install -e ./core
-```
-
-## Full reference compatibility check
-
-`tools/verify_against_case_reference.py` is a secondary compatibility checker against the supplied `geometry.py`. The documents remain the specification; `geometry.py` is only a reference implementation.
-
-After installing both packages and NumPy:
-
-```bash
-python -m pip install numpy
-python tools/verify_against_case_reference.py /path/to/directory/with/geometry.py/and/json
-```
-
-It compares every sample of all four supplied scenarios: satellite Earth-fixed positions, active flags, contact endpoints/distances and elevation angles.
-
-## Example graph consumer
-
-After installing core + adapter:
-
-```bash
-python examples/graph_consumer.py adapters/cosmo_a_json/tests/fixtures/01_full_constellation.json 0
-```
-
-The example deliberately implements reachability *outside* the 3D component. It consumes `project_network()` and respects `relay_allowed=False` for ground nodes. This is the intended dependency direction for the future routing component.
+The differential checker treats the documents as the specification and `geometry.py` only as a
+reference oracle. It compares all four supplied scenarios over all 720 grid points each.

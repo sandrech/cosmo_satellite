@@ -42,7 +42,7 @@ class ClientToGatewayReachability:
             return TraversalRole.BLOCKED
         if node.id == source_id:
             return TraversalRole.SOURCE if node.kind == NodeKind.CLIENT else TraversalRole.BLOCKED
-        if node.kind == NodeKind.SATELLITE and node.relay_allowed:
+        if node.kind == NodeKind.SATELLITE:
             return TraversalRole.TRANSIT
         if node.kind == NodeKind.GATEWAY:
             return TraversalRole.TARGET

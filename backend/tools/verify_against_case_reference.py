@@ -39,7 +39,7 @@ def main() -> int:
         if not isinstance(loaded, JsonOk):
             raise SystemExit(f"adapter failed for {scenario_path}: {loaded}")
         adapted = adapt_scenario(loaded.value)
-        model_result = SpatialModel.create(adapted.spatial)
+        model_result = SpatialModel.create(adapted.spatial, adapted.trajectory)
         if not isinstance(model_result, SpatialOk):
             raise SystemExit(f"model failed for {scenario_path}: {model_result}")
         model = model_result.value

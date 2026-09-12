@@ -150,3 +150,13 @@ JSON → DTO → SpatialSpecification → SpatialSnapshot(t) → StaticNetwork �
 ```
 
 The future dynamic component will own the time-grid loop around the last three steps.
+
+## Frontend JSON adapters
+
+`frontend_json` provides strict, versioned JSON adapters for UI-facing data only; it does not implement HTTP or any server transport:
+
+- `spatial-scene-1.0` for `spatial3d.SceneFrame`;
+- `spatial-network-1.0` for `spatial3d.NetworkProjection`;
+- `static-analysis-1.0` for `static_model.StaticAnalysis`.
+
+The case-defined final calculation export remains the separate `result_json` component using `cosmo-A-result-1.0`.

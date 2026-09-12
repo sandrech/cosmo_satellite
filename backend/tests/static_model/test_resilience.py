@@ -4,7 +4,7 @@ from static_model import Link, LinkKind, Node, NodeKind, Ok, StaticModel, Static
 def model_for(links: tuple[Link, ...], satellite_ids: tuple[str, ...]) -> StaticModel:
     nodes = (
         Node("C", NodeKind.CLIENT, True),
-        *(Node(node_id, NodeKind.SATELLITE, True, True) for node_id in satellite_ids),
+        *(Node(node_id, NodeKind.SATELLITE, True) for node_id in satellite_ids),
         Node("G", NodeKind.GATEWAY, True),
     )
     created = StaticModel.create(StaticNetwork(nodes, links))

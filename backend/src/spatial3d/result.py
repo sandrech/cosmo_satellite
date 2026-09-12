@@ -25,10 +25,11 @@ class SpatialProblemCode(StrEnum):
     INVALID_NUMBER = "spatial.invalid_number"
     INVALID_RANGE = "spatial.invalid_range"
     DUPLICATE_ID = "spatial.duplicate_id"
-    UNKNOWN_PLANE = "spatial.unknown_plane"
     INVALID_ROLE = "spatial.invalid_role"
     INVALID_INTERVAL = "spatial.invalid_interval"
     INVALID_REFERENCE = "spatial.invalid_reference"
+    INVALID_TRAJECTORY = "spatial.invalid_trajectory"
+    TRAJECTORY_BINDING = "spatial.trajectory_binding"
 
 
 @dataclass(frozen=True, slots=True)

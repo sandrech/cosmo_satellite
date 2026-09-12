@@ -1,19 +1,30 @@
 from .availability import DeploymentAndOutageSatelliteAvailability, GatewayOutageGroundAvailability
-from .contacts import AllSatellitePairs, ElevationGroundContact, RangeAndEarthOcclusionInterSatelliteContact
+from .contacts import (
+    AllSatellitePairCandidates,
+    MinimumElevationVisibility,
+    RangeAndEarthOcclusionInterSatelliteLink,
+    VisibleGroundLink,
+)
 from .contracts import (
     GroundAvailabilityPolicy,
-    GroundContactPolicy,
     GroundGeometry,
-    InterSatelliteContactPolicy,
+    GroundLinkPolicy,
+    GroundObservationModel,
+    GroundVisibilityPolicy,
+    InterSatelliteLinkPolicy,
+    InterSatelliteObservationModel,
     SatelliteAvailabilityPolicy,
-    SatelliteKinematics,
-    SatellitePairSource,
+    SatellitePairCandidateSource,
+    SatelliteTrajectoryProvider,
 )
-from .kinematics import CircularOrbitKinematics, SphericalGroundGeometry
+from .kinematics import SphericalGroundGeometry
 from .math3d import Vec3
 from .model import SpatialComponents, SpatialModel
+from .observations import SphericalGroundObservationModel, SegmentInterSatelliteObservationModel
 from .projections import (
     NetworkEdge,
+    NetworkGroundObservation,
+    NetworkGroundVisibility,
     NetworkNode,
     NetworkNodeKind,
     NetworkProjection,
@@ -32,8 +43,6 @@ from .specification import (
     GroundSite,
     Interval,
     LinkLimits,
-    OrbitEnvironment,
-    OrbitalPlane,
     Satellite,
     SatelliteOutage,
     SpatialSpecification,
@@ -42,11 +51,23 @@ from .specification import (
 from .state import (
     Contact,
     ContactKind,
+    CoordinateFrame,
     GroundObservation,
     GroundState,
+    GroundVisibility,
+    InterSatelliteObservation,
+    ReferenceFrame,
     SatelliteKinematicState,
     SatelliteState,
     SpatialSnapshot,
+)
+from .trajectory import (
+    CircularOrbitAssignment,
+    CircularOrbitConfiguration,
+    CircularOrbitEnvironment,
+    CircularOrbitTrajectory,
+    OrbitalPlane,
+    validate_circular_configuration,
 )
 
 __all__ = [name for name in globals() if not name.startswith("_")]

@@ -23,19 +23,19 @@ def make_model(*, nodes: tuple[Node, ...], links: tuple[Link, ...], visibility: 
     ("nodes", "links", "visibility", "expected"),
     (
         (
-            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True, True), Node("G", NodeKind.GATEWAY)),
+            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True), Node("G", NodeKind.GATEWAY)),
             (),
             (),
             NoRouteReason.NO_VISIBLE_SATELLITE,
         ),
         (
-            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True, True), Node("G", NodeKind.GATEWAY, False)),
+            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True), Node("G", NodeKind.GATEWAY, False)),
             (Link("C", "S1", 1, LinkKind.GROUND_SATELLITE),),
             (GroundVisibility("C", "S1", 20, 1), GroundVisibility("G", "S1", 20, 1)),
             NoRouteReason.GATEWAY_UNAVAILABLE,
         ),
         (
-            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True, True), Node("G", NodeKind.GATEWAY)),
+            (Node("C", NodeKind.CLIENT), Node("S1", NodeKind.SATELLITE, True), Node("G", NodeKind.GATEWAY)),
             (Link("C", "S1", 1, LinkKind.GROUND_SATELLITE),),
             (GroundVisibility("C", "S1", 20, 1),),
             NoRouteReason.NO_GATEWAY_CONTACT,
@@ -43,8 +43,8 @@ def make_model(*, nodes: tuple[Node, ...], links: tuple[Link, ...], visibility: 
         (
             (
                 Node("C", NodeKind.CLIENT),
-                Node("S1", NodeKind.SATELLITE, True, True),
-                Node("S2", NodeKind.SATELLITE, True, True),
+                Node("S1", NodeKind.SATELLITE, True),
+                Node("S2", NodeKind.SATELLITE, True),
                 Node("G", NodeKind.GATEWAY),
             ),
             (

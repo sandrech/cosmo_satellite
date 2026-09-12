@@ -23,7 +23,7 @@ def test_static_model_composition_reproduces_case_reachability_and_visibility(fi
     loaded = JsonStore(scenario_codec()).load(FIXTURES / filename)
     assert isinstance(loaded, JsonOk)
     scenario = adapt_scenario(loaded.value)
-    spatial = SpatialModel.create(scenario.spatial)
+    spatial = SpatialModel.create(scenario.spatial, scenario.trajectory)
     assert isinstance(spatial, SpatialOk)
 
     counts = {client_id: 0 for client_id in EXPECTED_REACHABLE_STEPS[filename]}
@@ -39,8 +39,8 @@ def test_static_model_composition_reproduces_case_reachability_and_visibility(fi
         expected_visible = {
             client_id: tuple(sorted(
                 observation.satellite_id
-                for observation in snapshot.value.ground_observations
-                if observation.ground_id == client_id and observation.geometrically_visible
+                for observation in snapshot.value.ground_visibility
+                if observation.ground_id == client_id
             ))
             for client_id in client_ids
         }

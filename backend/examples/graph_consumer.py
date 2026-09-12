@@ -17,7 +17,7 @@ def main(path: Path, t_s: float) -> int:
         return 2
 
     scenario = adapt_scenario(loaded.value)
-    spatial = SpatialModel.create(scenario.spatial)
+    spatial = SpatialModel.create(scenario.spatial, scenario.trajectory)
     if not isinstance(spatial, SpatialOk):
         print(*spatial.error, sep="\n", file=sys.stderr)
         return 2

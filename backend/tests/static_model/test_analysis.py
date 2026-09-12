@@ -15,9 +15,9 @@ def test_failure_impact_is_a_vector_and_criticality_ranking_is_explainable() -> 
         nodes=(
             Node("C1", NodeKind.CLIENT, True),
             Node("C2", NodeKind.CLIENT, True),
-            Node("S0", NodeKind.SATELLITE, True, True),
-            Node("S1", NodeKind.SATELLITE, True, True),
-            Node("S2", NodeKind.SATELLITE, True, True),
+            Node("S0", NodeKind.SATELLITE, True),
+            Node("S1", NodeKind.SATELLITE, True),
+            Node("S2", NodeKind.SATELLITE, True),
             Node("G", NodeKind.GATEWAY, True),
         ),
         links=(

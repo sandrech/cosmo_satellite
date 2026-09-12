@@ -14,10 +14,10 @@ def test_minimum_hops_and_minimum_distance_can_choose_different_routes() -> None
     network = StaticNetwork(
         nodes=(
             Node("C", NodeKind.CLIENT, True),
-            Node("S1", NodeKind.SATELLITE, True, True),
-            Node("S2", NodeKind.SATELLITE, True, True),
-            Node("S3", NodeKind.SATELLITE, True, True),
-            Node("S4", NodeKind.SATELLITE, True, True),
+            Node("S1", NodeKind.SATELLITE, True),
+            Node("S2", NodeKind.SATELLITE, True),
+            Node("S3", NodeKind.SATELLITE, True),
+            Node("S4", NodeKind.SATELLITE, True),
             Node("G", NodeKind.GATEWAY, True),
         ),
         links=(

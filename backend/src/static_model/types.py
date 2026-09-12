@@ -20,7 +20,6 @@ class Node:
     id: str
     kind: NodeKind
     available: bool = True
-    relay_allowed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
