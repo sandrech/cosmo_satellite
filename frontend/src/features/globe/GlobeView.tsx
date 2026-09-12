@@ -6,10 +6,15 @@ import { GlobeCesiumTexture } from "./GlobeCesiumTexture";
 import { GlobeMap2D } from "./GlobeMap2D";
 
 export function GlobeView() {
-  const { frame, loading, error, viewMode, earthStyle } = useAppState();
+  const { frame, loading, runProgress, error, viewMode, earthStyle } = useAppState();
 
   if (error && !frame) return <ErrorState message={error} />;
-  if (!frame && loading) return <LoadingState label="Формируем первый кадр…" />;
+  if (!frame && loading) {
+    const focusLabel = runProgress?.focusTS !== undefined
+      ? `Приоритетно считаем кадры вокруг T+${Math.round(runProgress.focusTS)} c…`
+      : "Формируем первый кадр…";
+    return <LoadingState label={focusLabel} />;
+  }
   if (!frame) {
     return (
       <div className="state-message">
@@ -23,7 +28,17 @@ export function GlobeView() {
     <div
       className={`globe-view reference-viewport is-${viewMode} is-${earthStyle}`}
     >
-      {loading ? <div className="frame-loading">Считаем полную временную сетку…</div> : null}
+      {loading ? (
+        <div className="frame-loading">
+          {runProgress?.phase === "aggregating"
+            ? "Кадры готовы, считаем итоговую аналитику…"
+            : runProgress
+              ? runProgress.focusReady === false && runProgress.focusTS !== undefined
+                ? `Считаем выбранный момент T+${Math.round(runProgress.focusTS)} c · готово ${runProgress.completedFrames}/${runProgress.totalFrames}`
+                : `Рассчитано ${runProgress.completedFrames}/${runProgress.totalFrames} кадров`
+              : "Запускаем расчёт временной сетки…"}
+        </div>
+      ) : null}
 
       {earthStyle === "imagery" ? (
         <GlobeCesiumTexture />

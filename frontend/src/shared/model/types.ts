@@ -206,8 +206,22 @@ export interface ModelRunData {
   routingStrategies: RoutingStrategyOption[];
   primaryRoutingStrategyId: RoutingStrategyId;
   trace: unknown;
-  dynamicAnalysis: unknown;
-  raw: unknown;
+  dynamicAnalysis: unknown | null;
+  raw: unknown | null;
+}
+
+export interface ModelRunProgress {
+  /** Number of frames already computed or reused from the backend cache. */
+  completedFrames: number;
+  /** Number of frames delivered to this browser session. */
+  deliveredFrames?: number;
+  totalFrames: number;
+  phase: "frames" | "aggregating" | "complete";
+  cacheHit: boolean;
+  /** Current demand-driven timeline focus acknowledged by the backend. */
+  focusTS?: number;
+  /** True once the exact focused frame has reached the browser. */
+  focusReady?: boolean;
 }
 
 export interface LayerVisibility {

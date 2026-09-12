@@ -5,7 +5,7 @@ import { ScenarioUpload } from "../features/project/ScenarioUpload";
 import { useAppState } from "../shared/model/store";
 
 export function ProjectPage() {
-  const { scenario, modelRun } = useAppState();
+  const { scenario, modelRun, runProgress } = useAppState();
   const clients = scenario.groundSites.filter((site) => site.role === "client").length;
   const gateways = scenario.groundSites.filter((site) => site.role === "gateway").length;
 
@@ -15,7 +15,7 @@ export function ProjectPage() {
         <div>
           <span className="eyebrow">Модель и расчёт</span>
           <h1>{scenario.title}</h1>
-          <p className="page-subtitle">Все поля сценария доступны до запуска. Backend рассчитывает официальную временную сетку одним запросом; перемещение по timeline после этого локальное.</p>
+          <p className="page-subtitle">Timeline работает demand-driven: переход к моменту времени сразу повышает приоритет его кадра и соседних батчей; остальная временная сетка досчитывается в фоне.</p>
         </div>
         <span className="scenario-pill">{scenario.id}</span>
       </header>
@@ -28,7 +28,7 @@ export function ProjectPage() {
         <span><strong>{clients}</strong> клиентов</span>
         <span><strong>{gateways}</strong> шлюзов</span>
         <span><strong>{scenario.failures.length + scenario.gatewayOutages.length}</strong> интервалов отказа</span>
-        <span><strong>{modelRun ? "готов" : "—"}</strong> полный trace</span>
+        <span><strong>{runProgress?.phase === "complete" ? "готов" : runProgress ? `${runProgress.completedFrames}/${runProgress.totalFrames}` : modelRun ? "частично" : "—"}</strong> trace</span>
       </div>
 
       <section className="content-card">

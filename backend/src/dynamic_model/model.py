@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 import math
 
 from spatial3d import Err as SpatialErr, SpatialModel
@@ -103,7 +104,26 @@ class DynamicModel:
         frames_result = self._build_frames()
         if isinstance(frames_result, Err):
             return frames_result
-        frames = frames_result.value
+        return self.analyze_frames(frames_result.value)
+
+    def analyze_frames(
+        self,
+        frames: tuple[DynamicFrame, ...],
+    ) -> Result[DynamicAnalysis, DynamicProblems]:
+        """Aggregate a complete, already-computed time grid.
+
+        This is intentionally public so transport layers can stream frames while
+        they are produced and perform the exact same final aggregation after the
+        last batch, without recalculating the model.
+        """
+        expected_times = tuple(self.grid.sample_times)
+        actual_times = tuple(frame.t_s for frame in frames)
+        if actual_times != expected_times:
+            return Err((DynamicProblem(
+                DynamicProblemCode.INCONSISTENT_ANALYSIS,
+                "dynamic frames must cover the complete calculation grid in order",
+                ("frames",),
+            ),))
 
         try:
             clients = self._aggregate_clients(frames)
@@ -130,55 +150,95 @@ class DynamicModel:
             satellite_criticality_ranking=ranking,
         ))
 
-    def _build_frames(self) -> Result[tuple[DynamicFrame, ...], DynamicProblems]:
-        frames: list[DynamicFrame] = []
+    def frame_at(self, t_s: int) -> Result[DynamicFrame, DynamicProblems]:
+        """Calculate one exact frame from the official time grid.
+
+        Frames are independent at the model level, so callers may request them
+        in any order.  This is the primitive used by interactive schedulers that
+        reprioritize work around a user's current timeline focus.  Final dynamic
+        aggregates still require the complete grid in canonical order and are
+        produced by :meth:`analyze_frames`.
+        """
+        if (
+            t_s < self.grid.start_s
+            or t_s >= self.grid.end_s
+            or (t_s - self.grid.start_s) % self.grid.step_s != 0
+        ):
+            return Err((DynamicProblem(
+                DynamicProblemCode.INVALID_GRID,
+                f"t={t_s} is not a sample of the calculation grid",
+                ("frames", t_s),
+            ),))
+
+        spatial = self.spatial_model.snapshot(t_s)
+        if isinstance(spatial, SpatialErr):
+            message = "; ".join(problem.message for problem in spatial.error)
+            return Err((DynamicProblem(
+                DynamicProblemCode.SPATIAL_SNAPSHOT,
+                f"spatial snapshot failed at t={t_s}: {message}",
+                ("frames", t_s, "spatial"),
+            ),))
+
+        network = self.components.network_adapter.from_snapshot(spatial.value)
+        static_model = StaticModel.create(
+            network,
+            components=self.static_components,
+            plan=self.static_plan,
+        )
+        if isinstance(static_model, StaticErr):
+            message = "; ".join(problem.message for problem in static_model.error)
+            return Err((DynamicProblem(
+                DynamicProblemCode.STATIC_MODEL,
+                f"static model creation failed at t={t_s}: {message}",
+                ("frames", t_s, "static"),
+            ),))
+
+        static_analysis = static_model.value.analyze()
+        if isinstance(static_analysis, StaticErr):
+            message = "; ".join(problem.message for problem in static_analysis.error)
+            return Err((DynamicProblem(
+                DynamicProblemCode.STATIC_MODEL,
+                f"static analysis failed at t={t_s}: {message}",
+                ("frames", t_s, "static"),
+            ),))
+
+        return Ok(DynamicFrame(t_s, spatial.value, static_analysis.value))
+
+    def iter_frames(self) -> Iterator[Result[DynamicFrame, DynamicProblems]]:
+        """Yield exact frame analyses one-by-one in official grid order.
+
+        The iterator stops after the first model error.  It is the streaming
+        counterpart of ``_build_frames`` and uses the same spatial/static
+        semantics as a normal full ``analyze`` call.
+        """
         expected_sources: tuple[str, ...] | None = None
 
         for t_s in self.grid.sample_times:
-            spatial = self.spatial_model.snapshot(t_s)
-            if isinstance(spatial, SpatialErr):
-                message = "; ".join(problem.message for problem in spatial.error)
-                return Err((DynamicProblem(
-                    DynamicProblemCode.SPATIAL_SNAPSHOT,
-                    f"spatial snapshot failed at t={t_s}: {message}",
-                    ("frames", t_s, "spatial"),
-                ),))
+            frame_result = self.frame_at(t_s)
+            if isinstance(frame_result, Err):
+                yield frame_result
+                return
 
-            network = self.components.network_adapter.from_snapshot(spatial.value)
-            static_model = StaticModel.create(
-                network,
-                components=self.static_components,
-                plan=self.static_plan,
-            )
-            if isinstance(static_model, StaticErr):
-                message = "; ".join(problem.message for problem in static_model.error)
-                return Err((DynamicProblem(
-                    DynamicProblemCode.STATIC_MODEL,
-                    f"static model creation failed at t={t_s}: {message}",
-                    ("frames", t_s, "static"),
-                ),))
-
-            static_analysis = static_model.value.analyze()
-            if isinstance(static_analysis, StaticErr):
-                message = "; ".join(problem.message for problem in static_analysis.error)
-                return Err((DynamicProblem(
-                    DynamicProblemCode.STATIC_MODEL,
-                    f"static analysis failed at t={t_s}: {message}",
-                    ("frames", t_s, "static"),
-                ),))
-
-            source_ids = tuple(client.client_id for client in static_analysis.value.clients)
+            frame = frame_result.value
+            source_ids = tuple(client.client_id for client in frame.static.clients)
             if expected_sources is None:
                 expected_sources = source_ids
             elif source_ids != expected_sources:
-                return Err((DynamicProblem(
+                yield Err((DynamicProblem(
                     DynamicProblemCode.INCONSISTENT_ANALYSIS,
                     "static source/client set changed across the calculation grid",
                     ("frames", t_s, "clients"),
                 ),))
+                return
 
-            frames.append(DynamicFrame(t_s, spatial.value, static_analysis.value))
+            yield Ok(frame)
 
+    def _build_frames(self) -> Result[tuple[DynamicFrame, ...], DynamicProblems]:
+        frames: list[DynamicFrame] = []
+        for frame_result in self.iter_frames():
+            if isinstance(frame_result, Err):
+                return frame_result
+            frames.append(frame_result.value)
         return Ok(tuple(frames))
 
     def _aggregate_clients(self, frames: tuple[DynamicFrame, ...]) -> tuple[ClientDynamicAnalysis, ...]:

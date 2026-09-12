@@ -255,12 +255,48 @@ export function toModelRunData(payload: ModelRunResponseDto): ModelRunData {
   };
 }
 
-function nearestSnapshot(trace: TraceDto, tS: number): SnapshotDto | null {
+export function toStreamingModelRunData(input: {
+  scenario: ScenarioDraft;
+  routingStrategies: RoutingStrategyOption[];
+  primaryRoutingStrategyId: RoutingStrategyId;
+  sampling: { start_s: number; end_s: number; step_s: number };
+  frames: unknown[];
+  dynamicAnalysis: unknown | null;
+}): ModelRunData {
+  const trace: TraceDto = {
+    schema_version: "model-trace-2.0",
+    sampling: input.sampling,
+    frames: input.frames as SnapshotDto[],
+  };
+  const raw = input.dynamicAnalysis === null
+    ? null
+    : {
+        schema_version: "cosmo-model-run-1.0",
+        scenario: input.scenario,
+        routing_strategies: input.routingStrategies,
+        primary_route_strategy_id: input.primaryRoutingStrategyId,
+        trace,
+        dynamic_analysis: input.dynamicAnalysis,
+      };
+  return {
+    schemaVersion: "cosmo-model-run-1.0",
+    scenario: input.scenario,
+    routingStrategies: input.routingStrategies,
+    primaryRoutingStrategyId: input.primaryRoutingStrategyId,
+    trace,
+    dynamicAnalysis: input.dynamicAnalysis,
+    raw,
+  };
+}
+
+function exactSnapshot(trace: TraceDto, tS: number): SnapshotDto | null {
   if (!trace.frames.length) return null;
-  const step = trace.sampling.step_s;
-  const rawIndex = Math.round((tS - trace.sampling.start_s) / step);
-  const index = Math.min(Math.max(rawIndex, 0), trace.frames.length - 1);
-  return trace.frames[index];
+  const tolerance = Math.max(1e-6, Math.abs(trace.sampling.step_s) * 1e-9);
+  return trace.frames.find((frame) => Math.abs(frame.t_s - tS) <= tolerance) ?? null;
+}
+
+export function hasModelRunFrame(run: ModelRunData, tS: number): boolean {
+  return exactSnapshot(run.trace as TraceDto, tS) !== null;
 }
 
 export function frameFromModelRun(
@@ -270,8 +306,8 @@ export function frameFromModelRun(
   routingStrategyId: RoutingStrategyId,
 ): SimulationFrame | null {
   const trace = run.trace as TraceDto;
-  const dynamic = run.dynamicAnalysis as DynamicAnalysisDto;
-  const snapshot = nearestSnapshot(trace, tS);
+  const dynamic = run.dynamicAnalysis as DynamicAnalysisDto | null;
+  const snapshot = exactSnapshot(trace, tS);
   if (!snapshot) return null;
 
   const scenario = run.scenario;
@@ -342,9 +378,11 @@ export function frameFromModelRun(
     inRoute: routeEdges.has([edge.a, edge.b].sort().join("::")),
   }));
 
-  const availability = Object.fromEntries(
-    dynamic.clients.map((item) => [item.client_id, availabilitySegments(item)]),
-  );
+  const availability = dynamic
+    ? Object.fromEntries(
+        dynamic.clients.map((item) => [item.client_id, availabilitySegments(item)]),
+      )
+    : {};
 
   return {
     source: "backend",
@@ -359,7 +397,7 @@ export function frameFromModelRun(
     routeDetails: selectedRoute,
     routesByStrategy: routeMap,
     orbits: buildOrbitPaths(scenario, snapshot.t_s),
-    metrics: dynamicMetrics(dynamic),
+    metrics: dynamic ? dynamicMetrics(dynamic) : [],
     availability,
     outageReason: client.service.no_route_reason,
     reachableClients: snapshot.analysis.clients.filter((item) => item.service.reachable).length,

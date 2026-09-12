@@ -1138,7 +1138,7 @@
 .time-slider::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent) 0 42%, #d9d9d9 42% 100%);
+  background: linear-gradient(90deg, var(--accent) 0 var(--computed-ratio, 0%), #d9d9d9 var(--computed-ratio, 0%) 100%);
 }
 
 .time-slider::-webkit-slider-thumb {
@@ -1153,6 +1153,26 @@
   margin-top: 1px;
   color: #666;
   font-size: 8px;
+}
+
+
+.timeline-status {
+  position: absolute;
+  right: 0;
+  bottom: -12px;
+  color: #777;
+  font-size: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-status.is-pending {
+  color: var(--accent);
+}
+
+.time-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .playback-speed-label {
@@ -1307,7 +1327,27 @@
     grid-template-columns: auto minmax(140px, 1fr) auto;
   }
 
-  .playback-speed-label {
+  
+.timeline-status {
+  position: absolute;
+  right: 0;
+  bottom: -12px;
+  color: #777;
+  font-size: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-status.is-pending {
+  color: var(--accent);
+}
+
+.time-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.playback-speed-label {
     display: none;
   }
 }

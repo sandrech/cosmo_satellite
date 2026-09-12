@@ -83,7 +83,7 @@ export function ScenarioUpload() {
     if (!selectedModelId) return;
     try {
       await loadModel(selectedModelId);
-      setMessage("Модель загружена из backend, стартовый кадр готов. Для timeline и динамической аналитики нажмите «Рассчитать всю модель».");
+      setMessage("Модель загружена из backend, стартовый кадр готов. Timeline доступен сразу и сам запрашивает выбранные моменты; «Рассчитать всю модель» завершает периодовую аналитику.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Не удалось загрузить модель");
     }

@@ -8,13 +8,15 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend_api.service import ApiError, ApplicationService
+
+from .context_scheduler import ContextFrameScheduler
 
 from cosmo_a_json import ScenarioDto, adapt_scenario
 from dynamic_model import DynamicModel, Err as DynamicErr, TimeGrid
@@ -58,6 +60,18 @@ class ModelRunRequest(BaseModel):
     ] = "minimum_hops"
 
 
+
+
+class ModelStreamRequest(ModelRunRequest):
+    batch_size: int = Field(default=8, ge=1, le=64)
+
+
+class ModelContextStartRequest(ModelStreamRequest):
+    focus_t_s: float = 0.0
+    focus_radius_s: float | None = Field(default=None, gt=0)
+    direction: Literal[-1, 0, 1] = 0
+
+
 class ModelSnapshotRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -78,10 +92,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The full dynamic calculation is intentionally cached by exact scenario+plan.
-# Timeline interaction on the frontend never calls the model again.
+# Full runs and partial exact frames are cached by scenario+plan. Timeline focus
+# can reorder missing work without changing model semantics or recomputing frames.
 _RUN_CACHE: dict[str, dict[str, Any]] = {}
 _RUN_CACHE_LOCK = Lock()
+# Partial exact DynamicFrame cache.  It survives a websocket reconnect and lets
+# a later focus jump reuse already calculated timeline regions.
+_FRAME_CACHE: dict[str, dict[int, Any]] = {}
+_FRAME_CACHE_LOCK = Lock()
 _COMPAT_SERVICE = ApplicationService()
 
 
@@ -206,13 +224,38 @@ def _cache_key(scenario: dict[str, Any], primary_strategy_id: str) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _calculate_full_model(scenario_json: dict[str, Any], primary_strategy_id: str) -> dict[str, Any]:
-    key = _cache_key(scenario_json, primary_strategy_id)
-    with _RUN_CACHE_LOCK:
-        cached = _RUN_CACHE.get(key)
-    if cached is not None:
-        return cached
+def _cached_frame(key: str, index: int) -> Any | None:
+    with _FRAME_CACHE_LOCK:
+        return _FRAME_CACHE.get(key, {}).get(index)
 
+
+def _cache_frame(key: str, index: int, frame: Any) -> None:
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE.setdefault(key, {})[index] = frame
+
+
+def _cache_frames(key: str, frames: tuple[Any, ...]) -> None:
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE[key] = {index: frame for index, frame in enumerate(frames)}
+
+
+def _cached_frame_count(key: str) -> int:
+    with _FRAME_CACHE_LOCK:
+        return len(_FRAME_CACHE.get(key, {}))
+
+
+def _complete_cached_frames(key: str, total: int) -> tuple[Any, ...] | None:
+    with _FRAME_CACHE_LOCK:
+        cached = _FRAME_CACHE.get(key, {})
+        if len(cached) < total or any(index not in cached for index in range(total)):
+            return None
+        return tuple(cached[index] for index in range(total))
+
+
+def _prepare_dynamic_model(
+    scenario_json: dict[str, Any],
+    primary_strategy_id: str,
+) -> tuple[DynamicModel, TimeGrid]:
     dto = _decode_scenario(scenario_json)
     adapted = adapt_scenario(dto)
 
@@ -232,14 +275,25 @@ def _calculate_full_model(scenario_json: dict[str, Any], primary_strategy_id: st
     )
     if isinstance(dynamic_result, DynamicErr):
         raise ValueError(f"DynamicModel: {_error_messages(dynamic_result)}")
+    return dynamic_result.value, grid
 
-    analysis_result = dynamic_result.value.analyze()
-    if isinstance(analysis_result, DynamicErr):
-        raise ValueError(f"Dynamic analysis: {_error_messages(analysis_result)}")
-    analysis = analysis_result.value
 
-    # Reuse the already-computed frames from DynamicAnalysis. No second model
-    # pass and no one-request-per-timestamp transport.
+def _snapshot_from_dynamic_frame(frame: Any) -> dict[str, Any]:
+    bundle = SnapshotBundle(
+        t_s=float(frame.t_s),
+        scene=project_scene(frame.spatial),
+        network=project_network(frame.spatial),
+        analysis=frame.static,
+    )
+    return snapshot_bundle_to_dto(bundle).model_dump(mode="json")
+
+
+def _model_run_response(
+    scenario_json: dict[str, Any],
+    primary_strategy_id: str,
+    grid: TimeGrid,
+    analysis: Any,
+) -> dict[str, Any]:
     trace = SampledTrace(
         sampling=SamplingRange(
             float(grid.start_s),
@@ -256,8 +310,7 @@ def _calculate_full_model(scenario_json: dict[str, Any], primary_strategy_id: st
             for frame in analysis.frames
         ),
     )
-
-    response = {
+    return {
         "schema_version": "cosmo-model-run-1.0",
         "scenario": scenario_json,
         "routing_strategies": list(ROUTING_STRATEGIES),
@@ -265,9 +318,424 @@ def _calculate_full_model(scenario_json: dict[str, Any], primary_strategy_id: st
         "trace": sampled_trace_to_dto(trace).model_dump(mode="json"),
         "dynamic_analysis": dynamic_analysis_to_dto(analysis).model_dump(mode="json"),
     }
+
+
+def _calculate_full_model(scenario_json: dict[str, Any], primary_strategy_id: str) -> dict[str, Any]:
+    key = _cache_key(scenario_json, primary_strategy_id)
+    with _RUN_CACHE_LOCK:
+        cached = _RUN_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    dynamic_model, grid = _prepare_dynamic_model(scenario_json, primary_strategy_id)
+    analysis_result = dynamic_model.analyze()
+    if isinstance(analysis_result, DynamicErr):
+        raise ValueError(f"Dynamic analysis: {_error_messages(analysis_result)}")
+
+    response = _model_run_response(
+        scenario_json,
+        primary_strategy_id,
+        grid,
+        analysis_result.value,
+    )
+    _cache_frames(key, analysis_result.value.frames)
     with _RUN_CACHE_LOCK:
         _RUN_CACHE[key] = response
     return response
+
+
+def _ndjson(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _stream_cached_run(response: dict[str, Any], batch_size: int):
+    trace = response["trace"]
+    frames = trace["frames"]
+    total = len(frames)
+    yield _ndjson({
+        "type": "start",
+        "schema_version": "cosmo-model-run-stream-1.0",
+        "scenario": response["scenario"],
+        "routing_strategies": response["routing_strategies"],
+        "primary_route_strategy_id": response["primary_route_strategy_id"],
+        "sampling": trace["sampling"],
+        "total_frames": total,
+        "cache_hit": True,
+    })
+    for offset in range(0, total, batch_size):
+        batch = frames[offset:offset + batch_size]
+        yield _ndjson({
+            "type": "frames",
+            "offset": offset,
+            "frames": batch,
+            "completed_frames": offset + len(batch),
+            "total_frames": total,
+        })
+    yield _ndjson({
+        "type": "complete",
+        "dynamic_analysis": response["dynamic_analysis"],
+        "completed_frames": total,
+        "total_frames": total,
+        "cache_hit": True,
+    })
+
+
+def _stream_model_run(
+    scenario_json: dict[str, Any],
+    primary_strategy_id: str,
+    batch_size: int,
+    dynamic_model: DynamicModel,
+    grid: TimeGrid,
+):
+    key = _cache_key(scenario_json, primary_strategy_id)
+    total = grid.sample_count
+    yield _ndjson({
+        "type": "start",
+        "schema_version": "cosmo-model-run-stream-1.0",
+        "scenario": scenario_json,
+        "routing_strategies": list(ROUTING_STRATEGIES),
+        "primary_route_strategy_id": primary_strategy_id,
+        "sampling": {
+            "start_s": grid.start_s,
+            "end_s": grid.end_s,
+            "step_s": grid.step_s,
+        },
+        "total_frames": total,
+        "cache_hit": False,
+    })
+
+    frames = []
+    batch: list[dict[str, Any]] = []
+    batch_offset = 0
+    for frame_result in dynamic_model.iter_frames():
+        if isinstance(frame_result, DynamicErr):
+            yield _ndjson({
+                "type": "error",
+                "detail": f"Dynamic analysis: {_error_messages(frame_result)}",
+            })
+            return
+        frame = frame_result.value
+        frames.append(frame)
+        _cache_frame(key, len(frames) - 1, frame)
+        batch.append(_snapshot_from_dynamic_frame(frame))
+        if len(batch) >= batch_size or len(frames) == total:
+            yield _ndjson({
+                "type": "frames",
+                "offset": batch_offset,
+                "frames": batch,
+                "completed_frames": len(frames),
+                "total_frames": total,
+            })
+            batch_offset = len(frames)
+            batch = []
+
+    yield _ndjson({
+        "type": "phase",
+        "phase": "aggregating",
+        "completed_frames": len(frames),
+        "total_frames": total,
+    })
+    analysis_result = dynamic_model.analyze_frames(tuple(frames))
+    if isinstance(analysis_result, DynamicErr):
+        yield _ndjson({
+            "type": "error",
+            "detail": f"Dynamic aggregation: {_error_messages(analysis_result)}",
+        })
+        return
+
+    response = _model_run_response(
+        scenario_json,
+        primary_strategy_id,
+        grid,
+        analysis_result.value,
+    )
+    with _RUN_CACHE_LOCK:
+        _RUN_CACHE[key] = response
+
+    yield _ndjson({
+        "type": "complete",
+        "dynamic_analysis": response["dynamic_analysis"],
+        "completed_frames": total,
+        "total_frames": total,
+        "cache_hit": False,
+    })
+
+
+async def _context_receiver(
+    websocket: WebSocket,
+    commands: asyncio.Queue[dict[str, Any]],
+    cancelled: asyncio.Event,
+) -> None:
+    try:
+        while not cancelled.is_set():
+            message = await websocket.receive_json()
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") == "cancel":
+                cancelled.set()
+                return
+            if message.get("type") == "focus":
+                # Keep every command cheap to receive.  The calculation loop drains
+                # to the newest focus before choosing more work.
+                commands.put_nowait(message)
+    except WebSocketDisconnect:
+        cancelled.set()
+
+
+def _apply_focus_commands(
+    scheduler: ContextFrameScheduler,
+    commands: asyncio.Queue[dict[str, Any]],
+) -> bool:
+    latest: dict[str, Any] | None = None
+    while True:
+        try:
+            latest = commands.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+    if latest is None:
+        return False
+
+    old_version = scheduler.version
+    try:
+        t_s = float(latest.get("t_s", scheduler.focus_t_s))
+        direction = int(latest.get("direction", 0))
+        radius_raw = latest.get("radius_s")
+        radius_s = float(radius_raw) if radius_raw is not None else None
+    except (TypeError, ValueError):
+        return False
+    scheduler.update_focus(t_s, radius_s=radius_s, direction=direction)
+    return scheduler.version != old_version
+
+
+async def _send_context_start(
+    websocket: WebSocket,
+    request: ModelContextStartRequest,
+    grid: TimeGrid,
+    *,
+    cache_hit: bool,
+) -> None:
+    await websocket.send_json({
+        "type": "start",
+        "schema_version": "cosmo-model-context-1.0",
+        "scenario": request.scenario,
+        "routing_strategies": list(ROUTING_STRATEGIES),
+        "primary_route_strategy_id": request.primary_route_strategy_id,
+        "sampling": {
+            "start_s": grid.start_s,
+            "end_s": grid.end_s,
+            "step_s": grid.step_s,
+        },
+        "total_frames": grid.sample_count,
+        "cache_hit": cache_hit,
+    })
+
+
+async def _serve_cached_context(
+    websocket: WebSocket,
+    request: ModelContextStartRequest,
+    response: dict[str, Any],
+    commands: asyncio.Queue[dict[str, Any]],
+    cancelled: asyncio.Event,
+) -> None:
+    sampling = response["trace"]["sampling"]
+    grid = TimeGrid(
+        int(sampling["start_s"]),
+        int(sampling["end_s"]),
+        int(sampling["step_s"]),
+    )
+    scheduler = ContextFrameScheduler(
+        grid,
+        batch_size=request.batch_size,
+        focus_t_s=request.focus_t_s,
+        focus_radius_s=request.focus_radius_s,
+        direction=request.direction,
+    )
+    await _send_context_start(websocket, request, grid, cache_hit=True)
+    frames = response["trace"]["frames"]
+
+    while scheduler.remaining and not cancelled.is_set():
+        _apply_focus_commands(scheduler, commands)
+        indices = scheduler.next_indices()
+        scheduler.mark_delivered(indices)
+        await websocket.send_json({
+            "type": "frames",
+            "indices": list(indices),
+            "frames": [frames[index] for index in indices],
+            "computed_frames": grid.sample_count,
+            "delivered_frames": scheduler.delivered,
+            "total_frames": grid.sample_count,
+            "focus_t_s": scheduler.focus_t_s,
+            "focus_ready": scheduler.focus_is_delivered(),
+        })
+        await asyncio.sleep(0)
+
+    if cancelled.is_set():
+        return
+    await websocket.send_json({
+        "type": "complete",
+        "dynamic_analysis": response["dynamic_analysis"],
+        "computed_frames": grid.sample_count,
+        "delivered_frames": grid.sample_count,
+        "total_frames": grid.sample_count,
+        "cache_hit": True,
+    })
+
+
+async def _serve_context_run(
+    websocket: WebSocket,
+    request: ModelContextStartRequest,
+    dynamic_model: DynamicModel,
+    grid: TimeGrid,
+    commands: asyncio.Queue[dict[str, Any]],
+    cancelled: asyncio.Event,
+) -> None:
+    key = _cache_key(request.scenario, request.primary_route_strategy_id)
+    scheduler = ContextFrameScheduler(
+        grid,
+        batch_size=request.batch_size,
+        focus_t_s=request.focus_t_s,
+        focus_radius_s=request.focus_radius_s,
+        direction=request.direction,
+    )
+    await _send_context_start(websocket, request, grid, cache_hit=False)
+
+    while scheduler.remaining and not cancelled.is_set():
+        _apply_focus_commands(scheduler, commands)
+        selected = scheduler.next_indices()
+        selected_version = scheduler.version
+        delivered_indices: list[int] = []
+        delivered_frames: list[dict[str, Any]] = []
+
+        for index in selected:
+            if cancelled.is_set():
+                return
+            frame = _cached_frame(key, index)
+            if frame is None:
+                t_s = scheduler.time_for_index(index)
+                frame_result = await asyncio.to_thread(dynamic_model.frame_at, t_s)
+                if isinstance(frame_result, DynamicErr):
+                    await websocket.send_json({
+                        "type": "error",
+                        "detail": f"Dynamic analysis: {_error_messages(frame_result)}",
+                    })
+                    return
+                frame = frame_result.value
+                _cache_frame(key, index, frame)
+
+            delivered_indices.append(index)
+            delivered_frames.append(_snapshot_from_dynamic_frame(frame))
+
+            # A jump received while one expensive frame was being calculated
+            # preempts the rest of the old batch.  The completed frame is kept.
+            focus_changed = _apply_focus_commands(scheduler, commands)
+            if focus_changed and scheduler.version != selected_version:
+                break
+
+        if delivered_indices:
+            scheduler.mark_delivered(delivered_indices)
+            await websocket.send_json({
+                "type": "frames",
+                "indices": delivered_indices,
+                "frames": delivered_frames,
+                "computed_frames": _cached_frame_count(key),
+                "delivered_frames": scheduler.delivered,
+                "total_frames": grid.sample_count,
+                "focus_t_s": scheduler.focus_t_s,
+                "focus_ready": scheduler.focus_is_delivered(),
+            })
+
+    if cancelled.is_set():
+        return
+
+    await websocket.send_json({
+        "type": "phase",
+        "phase": "aggregating",
+        "computed_frames": grid.sample_count,
+        "delivered_frames": grid.sample_count,
+        "total_frames": grid.sample_count,
+    })
+    canonical_frames = _complete_cached_frames(key, grid.sample_count)
+    if canonical_frames is None:
+        await websocket.send_json({"type": "error", "detail": "Internal frame cache is incomplete"})
+        return
+
+    analysis_result = await asyncio.to_thread(dynamic_model.analyze_frames, canonical_frames)
+    if isinstance(analysis_result, DynamicErr):
+        await websocket.send_json({
+            "type": "error",
+            "detail": f"Dynamic aggregation: {_error_messages(analysis_result)}",
+        })
+        return
+
+    response = _model_run_response(
+        request.scenario,
+        request.primary_route_strategy_id,
+        grid,
+        analysis_result.value,
+    )
+    with _RUN_CACHE_LOCK:
+        _RUN_CACHE[key] = response
+
+    await websocket.send_json({
+        "type": "complete",
+        "dynamic_analysis": response["dynamic_analysis"],
+        "computed_frames": grid.sample_count,
+        "delivered_frames": grid.sample_count,
+        "total_frames": grid.sample_count,
+        "cache_hit": False,
+    })
+
+
+@app.websocket("/api/model/run/context")
+async def run_model_context(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_json()
+        request = ModelContextStartRequest.model_validate(raw)
+    except (ValidationError, ValueError, TypeError) as exc:
+        await websocket.send_json({"type": "error", "detail": f"Invalid context run request: {exc}"})
+        await websocket.close(code=1008)
+        return
+    except WebSocketDisconnect:
+        return
+
+    key = _cache_key(request.scenario, request.primary_route_strategy_id)
+    with _RUN_CACHE_LOCK:
+        cached = _RUN_CACHE.get(key)
+
+    commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    cancelled = asyncio.Event()
+    receiver = asyncio.create_task(_context_receiver(websocket, commands, cancelled))
+    try:
+        if cached is not None:
+            await _serve_cached_context(websocket, request, cached, commands, cancelled)
+        else:
+            try:
+                dynamic_model, grid = await asyncio.to_thread(
+                    _prepare_dynamic_model,
+                    request.scenario,
+                    request.primary_route_strategy_id,
+                )
+            except ValueError as exc:
+                await websocket.send_json({"type": "error", "detail": str(exc)})
+                return
+            await _serve_context_run(
+                websocket,
+                request,
+                dynamic_model,
+                grid,
+                commands,
+                cancelled,
+            )
+    except WebSocketDisconnect:
+        cancelled.set()
+    finally:
+        cancelled.set()
+        receiver.cancel()
+        try:
+            await receiver
+        except (asyncio.CancelledError, WebSocketDisconnect):
+            pass
 
 
 @app.get("/api/health")
@@ -323,6 +791,42 @@ async def run_model(request: ModelRunRequest) -> JSONResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(payload)
+
+
+@app.post("/api/model/run/stream")
+def run_model_stream(request: ModelStreamRequest) -> StreamingResponse:
+    key = _cache_key(request.scenario, request.primary_route_strategy_id)
+    with _RUN_CACHE_LOCK:
+        cached = _RUN_CACHE.get(key)
+
+    if cached is not None:
+        stream = _stream_cached_run(cached, request.batch_size)
+    else:
+        try:
+            dynamic_model, grid = _prepare_dynamic_model(
+                request.scenario,
+                request.primary_route_strategy_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        stream = _stream_model_run(
+            request.scenario,
+            request.primary_route_strategy_id,
+            request.batch_size,
+            dynamic_model,
+            grid,
+        )
+
+    return StreamingResponse(
+        stream,
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            # Keep gzip middleware from buffering small progressive chunks.
+            "Content-Encoding": "identity",
+        },
+    )
 
 
 def _compat_call(method_name: str, payload: dict[str, Any]) -> JSONResponse:

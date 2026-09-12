@@ -6,20 +6,26 @@ export function RunControls() {
     dirty,
     loading,
     modelRun,
+    runProgress,
     recalculate,
     setPage,
     setPlaying,
     setTS,
   } = useAppState();
   const [localError, setLocalError] = useState<string | null>(null);
+  const progressPercent = runProgress && runProgress.totalFrames > 0
+    ? Math.round((runProgress.completedFrames / runProgress.totalFrames) * 100)
+    : 0;
 
   async function run() {
     setLocalError(null);
     setPlaying(false);
+    const calculation = recalculate();
+    // Open the analysis workspace immediately. The timeline is fully navigable:
+    // moving it reprioritizes backend work around the selected model time.
+    setPage("analysis");
     try {
-      await recalculate();
-      setTS(0);
-      setPage("analysis");
+      await calculation;
     } catch (reason: unknown) {
       setLocalError(reason instanceof Error ? reason.message : "Расчёт не выполнен");
     }
@@ -30,12 +36,16 @@ export function RunControls() {
       <div className={`calculation-status ${dirty ? "is-dirty" : "is-ready"}`}>
         <i />
         {loading
-          ? "Идёт полный расчёт временной сетки — стартовый кадр уже доступен"
+          ? runProgress?.phase === "aggregating"
+            ? `Все ${runProgress.totalFrames} кадров готовы — считаем итоговую аналитику`
+            : runProgress
+              ? `Фоновый расчёт: ${runProgress.completedFrames}/${runProgress.totalFrames} кадров (${progressPercent}%). Выбранная область имеет приоритет`
+              : "Запускаем потоковый расчёт — стартовый кадр уже доступен"
           : dirty
             ? "Параметры изменены — требуется пересчитать модель"
             : modelRun
               ? "Текущий полный расчёт соответствует параметрам"
-              : "Стартовый кадр готов — запустите полный расчёт для timeline и динамической аналитики"}
+              : "Стартовый кадр готов — timeline уже доступен; полный расчёт нужен для периодовой аналитики"}
         {localError ? <strong>{localError}</strong> : null}
       </div>
       <div className="run-controls">
@@ -43,7 +53,11 @@ export function RunControls() {
           Сбросить время
         </button>
         <button className="primary-button" type="button" onClick={() => void run()} disabled={loading}>
-          {loading ? "Расчёт всей модели…" : "▶ Рассчитать всю модель"}
+          {loading && runProgress
+            ? `Расчёт ${progressPercent}%…`
+            : loading
+              ? "Запуск расчёта…"
+              : "▶ Рассчитать всю модель"}
         </button>
       </div>
     </div>

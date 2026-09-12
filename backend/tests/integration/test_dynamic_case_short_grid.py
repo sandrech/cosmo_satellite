@@ -30,3 +30,28 @@ def test_dynamic_model_composes_real_spatial_and_static_models_with_full_analysi
     assert all(len(frame.static.satellite_failure_impacts) == 48 for frame in analysis.frames)
     assert len(analysis.satellite_criticality) == 48
     assert len(analysis.satellite_criticality_ranking) == 48
+
+
+def test_streamed_frames_aggregate_to_the_same_dynamic_analysis() -> None:
+    loaded = JsonStore(scenario_codec()).load(FIXTURES / "01_full_constellation.json")
+    assert isinstance(loaded, JsonOk)
+    scenario = adapt_scenario(loaded.value)
+    spatial = SpatialModel.create(scenario.spatial, scenario.trajectory)
+    assert isinstance(spatial, SpatialOk)
+
+    dynamic = DynamicModel.create(
+        spatial.value,
+        TimeGrid.from_horizon(360, 120),
+        scenario.calculation.target_availability,
+    )
+    assert isinstance(dynamic, DynamicOk)
+
+    frame_results = tuple(dynamic.value.iter_frames())
+    assert all(isinstance(item, DynamicOk) for item in frame_results)
+    frames = tuple(item.value for item in frame_results if isinstance(item, DynamicOk))
+
+    streamed = dynamic.value.analyze_frames(frames)
+    complete = dynamic.value.analyze()
+    assert isinstance(streamed, DynamicOk)
+    assert isinstance(complete, DynamicOk)
+    assert streamed.value == complete.value
