@@ -243,9 +243,20 @@ class ResilientThenDistanceRouting:
                 path_satellites = tuple(
                     node_id for node_id in path if nodes[node_id].kind == NodeKind.SATELLITE
                 )
-                if path_satellites:
-                    actual_survival = min(survives_failure[node_id] for node_id in path_satellites)
-                    worst_backup = max(backup_distance[node_id] for node_id in path_satellites)
+                # FailureDomainPolicy defines which satellite failures this strategy
+                # is asked to protect against. Satellites outside that domain may
+                # legitimately appear on a route and must not be indexed in the
+                # counterfactual dictionaries.
+                evaluated_path_satellites = tuple(
+                    node_id for node_id in path_satellites if node_id in survives_failure
+                )
+                if evaluated_path_satellites:
+                    actual_survival = min(
+                        survives_failure[node_id] for node_id in evaluated_path_satellites
+                    )
+                    worst_backup = max(
+                        backup_distance[node_id] for node_id in evaluated_path_satellites
+                    )
                 else:
                     actual_survival = 1.0
                     worst_backup = 0.0

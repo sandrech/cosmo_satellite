@@ -18,9 +18,7 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install .
 
-# The backend currently exposes reusable components rather than a long-running
-# application process. A service CMD belongs to the future API/application
-# component and can be added without changing the component packages below it.
+CMD ["python", "-m", "backend_api.server", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS test
 

@@ -32,6 +32,24 @@ function projectGround(site: GroundSite) {
   return projectLonLat(site.lonDeg, site.latDeg);
 }
 
+function wrappedLineSegments(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+) {
+  const dx = target.x - source.x;
+  if (Math.abs(dx) <= MAP_W * 0.5) return [[source, target] as const];
+  if (dx > 0) {
+    return [
+      [source, { x: target.x - MAP_W, y: target.y }] as const,
+      [{ x: source.x + MAP_W, y: source.y }, target] as const,
+    ];
+  }
+  return [
+    [source, { x: target.x + MAP_W, y: target.y }] as const,
+    [{ x: source.x - MAP_W, y: source.y }, target] as const,
+  ];
+}
+
 function orbitPathD(orbit: OrbitPath) {
   if (!orbit.positions.length) return "";
   let d = "";
@@ -173,8 +191,10 @@ export function GlobeMap2D() {
             {frame.links.filter((link) => !link.inRoute).map((link) => {
               const source = positionIndex.get(link.sourceId);
               const target = positionIndex.get(link.targetId);
-              if (!source || !target || Math.abs(source.x - target.x) > MAP_W * 0.45) return null;
-              return <line key={link.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
+              if (!source || !target) return null;
+              return wrappedLineSegments(source, target).map(([left, right], index) => (
+                <line key={`${link.id}:${index}`} x1={left.x} y1={left.y} x2={right.x} y2={right.y} />
+              ));
             })}
           </g>
         )}
@@ -184,8 +204,10 @@ export function GlobeMap2D() {
             {frame.links.filter((link) => link.inRoute).map((link) => {
               const source = positionIndex.get(link.sourceId);
               const target = positionIndex.get(link.targetId);
-              if (!source || !target || Math.abs(source.x - target.x) > MAP_W * 0.45) return null;
-              return <line key={link.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
+              if (!source || !target) return null;
+              return wrappedLineSegments(source, target).map(([left, right], index) => (
+                <line key={`${link.id}:${index}`} x1={left.x} y1={left.y} x2={right.x} y2={right.y} />
+              ));
             })}
           </g>
         )}

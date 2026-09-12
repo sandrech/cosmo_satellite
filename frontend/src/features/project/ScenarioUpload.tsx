@@ -5,14 +5,21 @@ import { useAppState } from "../../shared/model/store";
 export function ScenarioUpload() {
   const inputRef = useRef<HTMLInputElement>(null);
   const { setScenario, setTS } = useAppState();
-  const [message, setMessage] = useState("Можно загрузить JSON формата cosmo-A-1.0");
+  const [message, setMessage] = useState("Можно загрузить полный JSON формата cosmo-A-1.0");
 
   async function load(file?: File) {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text());
-      setScenario(scenarioFromJson(parsed));
-      setTS(0);
+      const parsed: unknown = JSON.parse(await file.text());
+      if (parsed && typeof parsed === "object" && (parsed as { schema_version?: string }).schema_version === "frontend-workspace-state-1.0") {
+        const workspace = parsed as { scenario?: { canonical?: unknown }; runtime?: { t_s?: unknown } };
+        if (!workspace.scenario?.canonical) throw new Error("Старое состояние workspace не содержит полного канонического сценария");
+        setScenario(scenarioFromJson(workspace.scenario.canonical));
+        if (typeof workspace.runtime?.t_s === "number") setTS(workspace.runtime.t_s);
+      } else {
+        setScenario(scenarioFromJson(parsed));
+        setTS(0);
+      }
       setMessage(`Загружен: ${file.name}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Не удалось прочитать файл");
@@ -21,20 +28,9 @@ export function ScenarioUpload() {
 
   return (
     <div className="upload-card">
-      <div>
-        <strong>Сценарий JSON</strong>
-        <p>{message}</p>
-      </div>
-      <button className="primary-button" onClick={() => inputRef.current?.click()}>
-        Выбрать файл
-      </button>
-      <input
-        ref={inputRef}
-        hidden
-        type="file"
-        accept=".json,application/json"
-        onChange={(event) => load(event.target.files?.[0])}
-      />
+      <div><strong>Сценарий JSON</strong><p>{message}</p></div>
+      <button className="primary-button" onClick={() => inputRef.current?.click()}>Выбрать файл</button>
+      <input ref={inputRef} hidden type="file" accept=".json,application/json" onChange={(event) => load(event.target.files?.[0])} />
     </div>
   );
 }

@@ -18,12 +18,12 @@ function normalizePosition(position: Vector3Km, earthRadius = 4): Vec3 {
 }
 
 function groundPosition(site: GroundSite, radius = 4.03): Vec3 {
-  const lat = site.latDeg * Math.PI / 180;
-  const lon = site.lonDeg * Math.PI / 180;
+  const norm = Math.hypot(site.position.xKm, site.position.yKm, site.position.zKm);
+  const scale = radius / norm;
   return {
-    x: radius * Math.cos(lat) * Math.cos(lon),
-    y: radius * Math.sin(lat),
-    z: radius * Math.cos(lat) * Math.sin(lon),
+    x: site.position.xKm * scale,
+    y: site.position.zKm * scale,
+    z: site.position.yKm * scale,
   };
 }
 
@@ -85,9 +85,12 @@ export function GlobeCanvas3D() {
     const canvas = canvasRef.current;
     const host = hostRef.current;
     if (!canvas || !host || !frame) return;
+    const currentFrame = frame as NonNullable<typeof frame>;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const drawing = ctx;
+    const currentHost = host;
 
     let raf = 0;
     let resizeObserver: ResizeObserver | null = null;
@@ -99,13 +102,13 @@ export function GlobeCanvas3D() {
     };
 
     const sizeCanvas = () => {
-      const rect = host.getBoundingClientRect();
+      const rect = currentHost.getBoundingClientRect();
       const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
       canvas.width = Math.max(1, Math.round(rect.width * dpr));
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawing.setTransform(dpr, 0, 0, dpr, 0, 0);
       requestDraw();
     };
 
@@ -119,31 +122,31 @@ export function GlobeCanvas3D() {
       dash: number[] = [],
     ) => {
       if (points.length < 2) return;
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = opacity;
-      ctx.lineWidth = lineWidth;
-      ctx.setLineDash(dash);
-      ctx.beginPath();
+      drawing.save();
+      drawing.strokeStyle = color;
+      drawing.globalAlpha = opacity;
+      drawing.lineWidth = lineWidth;
+      drawing.setLineDash(dash);
+      drawing.beginPath();
       let started = false;
       for (const raw of points) {
         const rotated = rotate(raw, rotationRef.current.x, rotationRef.current.y);
         const p = project(rotated, width, height, zoomRef.current);
         if (!started) {
-          ctx.moveTo(p.x, p.y);
+          drawing.moveTo(p.x, p.y);
           started = true;
         } else {
-          ctx.lineTo(p.x, p.y);
+          drawing.lineTo(p.x, p.y);
         }
       }
-      ctx.stroke();
-      ctx.restore();
+      drawing.stroke();
+      drawing.restore();
     };
 
     const drawMesh = (width: number, height: number) => {
-      ctx.save();
-      ctx.strokeStyle = "rgba(70,70,70,.58)";
-      ctx.lineWidth = 0.75;
+      drawing.save();
+      drawing.strokeStyle = "rgba(70,70,70,.58)";
+      drawing.lineWidth = 0.75;
 
       const latitudes = Array.from({ length: 11 }, (_, index) => -75 + index * 15);
       const longitudes = Array.from({ length: 24 }, (_, index) => -180 + index * 15);
@@ -154,10 +157,10 @@ export function GlobeCanvas3D() {
         if ((ar.z + br.z) / 2 < -0.08) return;
         const ap = project(ar, width, height, zoomRef.current);
         const bp = project(br, width, height, zoomRef.current);
-        ctx.beginPath();
-        ctx.moveTo(ap.x, ap.y);
-        ctx.lineTo(bp.x, bp.y);
-        ctx.stroke();
+        drawing.beginPath();
+        drawing.moveTo(ap.x, ap.y);
+        drawing.lineTo(bp.x, bp.y);
+        drawing.stroke();
       };
 
       for (let li = 0; li < latitudes.length - 1; li += 1) {
@@ -176,7 +179,7 @@ export function GlobeCanvas3D() {
         }
       }
 
-      ctx.restore();
+      drawing.restore();
     };
 
     function drawFrame() {
@@ -184,28 +187,28 @@ export function GlobeCanvas3D() {
       if (!dirty) return;
       dirty = false;
 
-      const rect = host.getBoundingClientRect();
+      const rect = currentHost.getBoundingClientRect();
       const width = rect.width;
       const height = rect.height;
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = "#141414";
-      ctx.fillRect(0, 0, width, height);
+      drawing.clearRect(0, 0, width, height);
+      drawing.fillStyle = "#141414";
+      drawing.fillRect(0, 0, width, height);
 
       const center = project({ x: 0, y: 0, z: 0 }, width, height, zoomRef.current);
       const edge = project({ x: 4, y: 0, z: 0 }, width, height, zoomRef.current);
       const radius = Math.abs(edge.x - center.x);
 
-      ctx.save();
-      ctx.shadowColor = "rgba(226,122,29,.34)";
-      ctx.shadowBlur = 24;
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius * 1.025, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(226,122,29,.16)";
-      ctx.lineWidth = 12;
-      ctx.stroke();
-      ctx.restore();
+      drawing.save();
+      drawing.shadowColor = "rgba(226,122,29,.34)";
+      drawing.shadowBlur = 24;
+      drawing.beginPath();
+      drawing.arc(center.x, center.y, radius * 1.025, 0, Math.PI * 2);
+      drawing.strokeStyle = "rgba(226,122,29,.16)";
+      drawing.lineWidth = 12;
+      drawing.stroke();
+      drawing.restore();
 
-      const gradient = ctx.createRadialGradient(
+      const gradient = drawing.createRadialGradient(
         center.x - radius * 0.25,
         center.y - radius * 0.30,
         radius * 0.10,
@@ -216,20 +219,20 @@ export function GlobeCanvas3D() {
       gradient.addColorStop(0, "#2a2a2a");
       gradient.addColorStop(0.62, "#1d1d1d");
       gradient.addColorStop(1, "#101010");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-      ctx.fill();
+      drawing.fillStyle = gradient;
+      drawing.beginPath();
+      drawing.arc(center.x, center.y, radius, 0, Math.PI * 2);
+      drawing.fill();
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-      ctx.clip();
+      drawing.save();
+      drawing.beginPath();
+      drawing.arc(center.x, center.y, radius, 0, Math.PI * 2);
+      drawing.clip();
       drawMesh(width, height);
-      ctx.restore();
+      drawing.restore();
 
       if (layers.orbits) {
-        for (const orbit of frame.orbits) {
+        for (const orbit of currentFrame.orbits) {
           if (hidden.has(`plane:${orbit.planeId}`)) continue;
           drawPolyline(
             orbit.positions.map((position) => normalizePosition(position)),
@@ -243,11 +246,11 @@ export function GlobeCanvas3D() {
       }
 
       const positions = new Map<string, Vec3>();
-      frame.satellites.forEach((satellite) => positions.set(satellite.id, normalizePosition(satellite.position)));
-      frame.groundSites.forEach((site) => positions.set(site.id, groundPosition(site)));
+      currentFrame.satellites.forEach((satellite) => positions.set(satellite.id, normalizePosition(satellite.position)));
+      currentFrame.groundSites.forEach((site) => positions.set(site.id, groundPosition(site)));
 
       if (layers.network) {
-        for (const link of frame.links.filter((item) => !item.inRoute)) {
+        for (const link of currentFrame.links.filter((item) => !item.inRoute)) {
           const source = positions.get(link.sourceId);
           const target = positions.get(link.targetId);
           if (!source || !target) continue;
@@ -256,7 +259,7 @@ export function GlobeCanvas3D() {
       }
 
       if (layers.route) {
-        for (const link of frame.links.filter((item) => item.inRoute)) {
+        for (const link of currentFrame.links.filter((item) => item.inRoute)) {
           const source = positions.get(link.sourceId);
           const target = positions.get(link.targetId);
           if (!source || !target) continue;
@@ -267,53 +270,53 @@ export function GlobeCanvas3D() {
       hitsRef.current = [];
 
       if (layers.groundSites) {
-        for (const site of frame.groundSites) {
+        for (const site of currentFrame.groundSites) {
           if (hidden.has(`site:${site.id}`)) continue;
           const rotated = rotate(groundPosition(site), rotationRef.current.x, rotationRef.current.y);
           if (rotated.z < -0.35) continue;
           const p = project(rotated, width, height, zoomRef.current);
           const selected = selectedId === site.id;
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(Math.PI / 4);
-          ctx.fillStyle = site.role === "gateway" ? "#7ed6a5" : "#d7d7d7";
-          ctx.strokeStyle = selected ? "#e27a1d" : "#0f0f0f";
-          ctx.lineWidth = selected ? 2.5 : 2;
-          ctx.fillRect(-4, -4, 8, 8);
-          ctx.strokeRect(-4, -4, 8, 8);
-          ctx.restore();
+          drawing.save();
+          drawing.translate(p.x, p.y);
+          drawing.rotate(Math.PI / 4);
+          drawing.fillStyle = site.role === "gateway" ? "#7ed6a5" : "#d7d7d7";
+          drawing.strokeStyle = selected ? "#e27a1d" : "#0f0f0f";
+          drawing.lineWidth = selected ? 2.5 : 2;
+          drawing.fillRect(-4, -4, 8, 8);
+          drawing.strokeRect(-4, -4, 8, 8);
+          drawing.restore();
           if (layers.labels) {
-            ctx.fillStyle = "#e9e9e9";
-            ctx.font = "600 10px Inter, system-ui, sans-serif";
-            ctx.fillText(site.id, p.x + 9, p.y - 7);
+            drawing.fillStyle = "#e9e9e9";
+            drawing.font = "600 10px Inter, system-ui, sans-serif";
+            drawing.fillText(site.id, p.x + 9, p.y - 7);
           }
           hitsRef.current.push({ id: site.id, x: p.x, y: p.y, radius: 10, client: site.role === "client" });
         }
       }
 
       if (layers.satellites) {
-        frame.satellites.forEach((satellite, index) => {
+        currentFrame.satellites.forEach((satellite, index) => {
           if (hidden.has(`satellite:${satellite.id}`) || hidden.has(`plane:${satellite.planeId}`)) return;
           const rotated = rotate(normalizePosition(satellite.position), rotationRef.current.x, rotationRef.current.y);
           const p = project(rotated, width, height, zoomRef.current);
           const selected = selectedId === satellite.id;
-          const inRoute = frame.route.includes(satellite.id);
+          const inRoute = currentFrame.route.includes(satellite.id);
           const r = selected ? 5.5 : 3.4;
 
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = satellite.failed ? "#a34343" : inRoute ? "#f0f0f0" : "#f6f6f6";
-          ctx.fill();
-          ctx.lineWidth = selected ? 2.5 : 1.8;
-          ctx.strokeStyle = selected ? "#e27a1d" : "#101010";
-          ctx.stroke();
-          ctx.restore();
+          drawing.save();
+          drawing.beginPath();
+          drawing.arc(p.x, p.y, r, 0, Math.PI * 2);
+          drawing.fillStyle = satellite.failed ? "#a34343" : inRoute ? "#f0f0f0" : "#f6f6f6";
+          drawing.fill();
+          drawing.lineWidth = selected ? 2.5 : 1.8;
+          drawing.strokeStyle = selected ? "#e27a1d" : "#101010";
+          drawing.stroke();
+          drawing.restore();
 
           if (layers.labels && (selected || inRoute || index % 10 === 0)) {
-            ctx.fillStyle = "#ededed";
-            ctx.font = selected ? "700 11px Inter, system-ui, sans-serif" : "600 9px Inter, system-ui, sans-serif";
-            ctx.fillText(satellite.id, p.x + 7, p.y - 6);
+            drawing.fillStyle = "#ededed";
+            drawing.font = selected ? "700 11px Inter, system-ui, sans-serif" : "600 9px Inter, system-ui, sans-serif";
+            drawing.fillText(satellite.id, p.x + 7, p.y - 6);
           }
 
           hitsRef.current.push({ id: satellite.id, x: p.x, y: p.y, radius: 9 });
@@ -371,7 +374,7 @@ export function GlobeCanvas3D() {
       if (detail === "zoom-in") zoomRef.current = Math.min(1.85, zoomRef.current * 1.15);
       if (detail === "zoom-out") zoomRef.current = Math.max(0.72, zoomRef.current / 1.15);
       if (detail === "fullscreen") {
-        const target = host.closest(".globe-area") as HTMLElement | null;
+        const target = currentHost.closest(".globe-area") as HTMLElement | null;
         if (!document.fullscreenElement) target?.requestFullscreen?.();
         else document.exitFullscreen?.();
       }

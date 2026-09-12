@@ -15,11 +15,14 @@ class WorkspaceScenarioDto(StrictModel):
     title: str
     altitudeKm: float
     inclinationDeg: float
+    earthAngle0Deg: float = 12.0
     launchStage: Literal[1, 2, 3]
     islRangeKm: float
+    minElevationDeg: float = 10.0
     stepS: float = Field(gt=0)
     horizonS: float = Field(gt=0)
     targetAvailability: float
+    canonical: dict[str, Any] | None = None
 
 
 class WorkspaceRuntimeDto(StrictModel):

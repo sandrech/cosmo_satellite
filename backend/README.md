@@ -72,8 +72,7 @@ python -m pip install -e '.[dev]'
 
 ## Docker
 
-The backend is currently a component library, not yet a long-running API service.
-The Dockerfile therefore exposes explicit build targets instead of inventing a server entrypoint.
+The backend now includes a thin `backend_api` application/HTTP boundary. Domain components remain transport-independent; the server only validates requests and composes their existing public APIs.
 
 Build the installable runtime image:
 
@@ -95,7 +94,7 @@ docker build --target development -t cosmo-backend:dev .
 docker run --rm cosmo-backend:dev
 ```
 
-When the application/API component is added, its long-running `CMD` can be layered on top of the `runtime` target without coupling Docker concerns into `json_component`, `spatial3d`, or other domain components.
+The runtime image starts `python -m backend_api.server --host 0.0.0.0 --port 8000`.
 
 ## Test everything
 

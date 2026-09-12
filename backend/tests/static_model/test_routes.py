@@ -57,3 +57,49 @@ def test_minimum_hops_and_minimum_distance_can_choose_different_routes() -> None
     assert analysis.value.coverage.visible_satellites == ("S1", "S2", "S4")
     assert analysis.value.service.valid_ingress_satellites == ("S1", "S2")
     assert analysis.value.routing.selected_route == minimum_hops
+
+
+def test_resilient_routing_accepts_failure_domain_subset():
+    from dataclasses import dataclass
+
+    from static_model import (
+        ClientToGatewayReachability,
+        NetworkXGraphAlgorithms,
+        Node,
+        NodeKind,
+        Link,
+        LinkKind,
+        ResilientThenDistanceRouting,
+        StaticNetwork,
+    )
+
+    @dataclass(frozen=True)
+    class OnlyA:
+        def candidates(self, network: StaticNetwork) -> tuple[str, ...]:
+            return ("A",)
+
+    network = StaticNetwork(
+        nodes=(
+            Node("C", NodeKind.CLIENT, True),
+            Node("A", NodeKind.SATELLITE, True),
+            Node("B", NodeKind.SATELLITE, True),
+            Node("G", NodeKind.GATEWAY, True),
+        ),
+        links=(
+            Link("C", "A", 5.0, LinkKind.GROUND_SATELLITE),
+            Link("A", "G", 5.0, LinkKind.GROUND_SATELLITE),
+            Link("C", "B", 1.0, LinkKind.GROUND_SATELLITE),
+            Link("B", "G", 1.0, LinkKind.GROUND_SATELLITE),
+        ),
+        ground_visibility=(),
+    )
+    result = ResilientThenDistanceRouting().select_path(
+        network,
+        "C",
+        ("G",),
+        ClientToGatewayReachability(),
+        NetworkXGraphAlgorithms(),
+        OnlyA(),
+    )
+    assert result is not None
+    assert result[0] == ("C", "B", "G")

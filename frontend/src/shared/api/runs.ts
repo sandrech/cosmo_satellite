@@ -17,11 +17,21 @@ const PLANES = [
   { id: "P3", raanDeg: 120, phaseDeg: 15 },
 ];
 
+function groundVector(latDeg: number, lonDeg: number): Vector3Km {
+  const lat = radians(latDeg);
+  const lon = radians(lonDeg);
+  return {
+    xKm: EARTH_RADIUS_KM * Math.cos(lat) * Math.cos(lon),
+    yKm: EARTH_RADIUS_KM * Math.cos(lat) * Math.sin(lon),
+    zKm: EARTH_RADIUS_KM * Math.sin(lat),
+  };
+}
+
 const GROUND_SITES: GroundSite[] = [
-  { id: "C65", name: "Клиент C65", role: "client", latDeg: 65, lonDeg: 33 },
-  { id: "C70", name: "Клиент C70", role: "client", latDeg: 70, lonDeg: 60 },
-  { id: "C72", name: "Клиент C72", role: "client", latDeg: 72, lonDeg: 92 },
-  { id: "GW1", name: "Шлюз MUR", role: "gateway", latDeg: 68.97, lonDeg: 33.08 },
+  { id: "C65", name: "Клиент C65", role: "client", latDeg: 65, lonDeg: 33, available: true, position: groundVector(65, 33) },
+  { id: "C70", name: "Клиент C70", role: "client", latDeg: 70, lonDeg: 60, available: true, position: groundVector(70, 60) },
+  { id: "C72", name: "Клиент C72", role: "client", latDeg: 72, lonDeg: 92, available: true, position: groundVector(72, 92) },
+  { id: "GW1", name: "Шлюз MUR", role: "gateway", latDeg: 68.97, lonDeg: 33.08, available: true, position: groundVector(68.97, 33.08) },
 ];
 
 function radians(value: number) {
@@ -74,6 +84,7 @@ function buildSatellites(request: FrameRequest): SatelliteFrame[] {
         planeId: plane.id,
         active: launchBatch <= request.scenario.launchStage && !failed,
         failed,
+        inactiveReason: failed ? "failed" : launchBatch > request.scenario.launchStage ? "not-launched" : null,
         launchBatch,
         position: positionAt(
           planeIndex,
@@ -200,10 +211,12 @@ class MockSimulationGateway implements SimulationGateway {
       tS: request.tS,
       horizonS: request.scenario.horizonS,
       stepS: request.scenario.stepS,
+      bodyRadiusKm: EARTH_RADIUS_KM,
       satellites,
       groundSites: GROUND_SITES,
       links: network.links,
       route: network.route,
+      routes: network.route.length ? [{ strategyId: "demo", nodeIds: network.route, hopCount: network.route.length - 1, totalDistanceKm: network.links.filter((link) => link.inRoute).reduce((sum, link) => sum + link.distanceKm, 0) }] : [],
       orbits: buildOrbits(request),
       metrics: [
         { clientId: "C65", visibility: 99.1, availability: 92.4, maxOutageMinutes: 16, outages: 4 },
@@ -216,6 +229,10 @@ class MockSimulationGateway implements SimulationGateway {
         C72: segments(-1200),
       },
       outageReason: network.reason,
+      reachableClients: network.route.length ? 1 : 0,
+      clientCount: 3,
+      currentConnectivity: null,
+      survivesAnySingleSatelliteFailure: null,
     };
   }
 }

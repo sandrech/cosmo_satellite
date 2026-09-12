@@ -1,0 +1,313 @@
+{
+  "$defs": {
+    "DesignDto": {
+      "additionalProperties": false,
+      "properties": {
+        "launch_stage": {
+          "title": "Launch Stage",
+          "type": "integer"
+        },
+        "planes": {
+          "items": {
+            "$ref": "#/$defs/PlaneDto"
+          },
+          "title": "Planes",
+          "type": "array"
+        },
+        "satellites": {
+          "items": {
+            "$ref": "#/$defs/SatelliteDto"
+          },
+          "title": "Satellites",
+          "type": "array"
+        }
+      },
+      "required": [
+        "launch_stage",
+        "planes",
+        "satellites"
+      ],
+      "title": "DesignDto",
+      "type": "object"
+    },
+    "EnvironmentDto": {
+      "additionalProperties": false,
+      "properties": {
+        "altitude_km": {
+          "title": "Altitude Km",
+          "type": "number"
+        },
+        "inclination_deg": {
+          "title": "Inclination Deg",
+          "type": "number"
+        },
+        "earth_angle0_deg": {
+          "title": "Earth Angle0 Deg",
+          "type": "number"
+        },
+        "horizon_s": {
+          "title": "Horizon S",
+          "type": "integer"
+        },
+        "step_s": {
+          "title": "Step S",
+          "type": "integer"
+        },
+        "min_elevation_deg": {
+          "title": "Min Elevation Deg",
+          "type": "number"
+        },
+        "isl_range_km": {
+          "title": "Isl Range Km",
+          "type": "number"
+        },
+        "target_availability": {
+          "title": "Target Availability",
+          "type": "number"
+        }
+      },
+      "required": [
+        "altitude_km",
+        "inclination_deg",
+        "earth_angle0_deg",
+        "horizon_s",
+        "step_s",
+        "min_elevation_deg",
+        "isl_range_km",
+        "target_availability"
+      ],
+      "title": "EnvironmentDto",
+      "type": "object"
+    },
+    "GatewayOutageDto": {
+      "additionalProperties": false,
+      "properties": {
+        "gateway_id": {
+          "title": "Gateway Id",
+          "type": "string"
+        },
+        "start_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Start S"
+        },
+        "end_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "End S"
+        }
+      },
+      "required": [
+        "gateway_id",
+        "start_s",
+        "end_s"
+      ],
+      "title": "GatewayOutageDto",
+      "type": "object"
+    },
+    "GroundSiteDto": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "lat_deg": {
+          "title": "Lat Deg",
+          "type": "number"
+        },
+        "lon_deg": {
+          "title": "Lon Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role",
+        "lat_deg",
+        "lon_deg"
+      ],
+      "title": "GroundSiteDto",
+      "type": "object"
+    },
+    "MetaDto": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "MetaDto",
+      "type": "object"
+    },
+    "PlaneDto": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "raan_deg": {
+          "title": "Raan Deg",
+          "type": "number"
+        },
+        "phase_deg": {
+          "title": "Phase Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "raan_deg",
+        "phase_deg"
+      ],
+      "title": "PlaneDto",
+      "type": "object"
+    },
+    "SatelliteDto": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "plane_id": {
+          "title": "Plane Id",
+          "type": "string"
+        },
+        "slot_deg": {
+          "title": "Slot Deg",
+          "type": "number"
+        },
+        "launch_batch": {
+          "title": "Launch Batch",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "plane_id",
+        "slot_deg",
+        "launch_batch"
+      ],
+      "title": "SatelliteDto",
+      "type": "object"
+    },
+    "SatelliteOutageDto": {
+      "additionalProperties": false,
+      "properties": {
+        "satellite_id": {
+          "title": "Satellite Id",
+          "type": "string"
+        },
+        "start_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Start S"
+        },
+        "end_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "End S"
+        }
+      },
+      "required": [
+        "satellite_id",
+        "start_s",
+        "end_s"
+      ],
+      "title": "SatelliteOutageDto",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "cosmo-A-1.0"
+    },
+    "meta": {
+      "$ref": "#/$defs/MetaDto"
+    },
+    "environment": {
+      "$ref": "#/$defs/EnvironmentDto"
+    },
+    "design": {
+      "$ref": "#/$defs/DesignDto"
+    },
+    "ground_sites": {
+      "items": {
+        "$ref": "#/$defs/GroundSiteDto"
+      },
+      "title": "Ground Sites",
+      "type": "array"
+    },
+    "failures": {
+      "items": {
+        "$ref": "#/$defs/SatelliteOutageDto"
+      },
+      "title": "Failures",
+      "type": "array"
+    },
+    "gateway_outages": {
+      "items": {
+        "$ref": "#/$defs/GatewayOutageDto"
+      },
+      "title": "Gateway Outages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "meta",
+    "environment",
+    "design",
+    "ground_sites",
+    "failures",
+    "gateway_outages"
+  ],
+  "title": "ScenarioDto",
+  "type": "object"
+}

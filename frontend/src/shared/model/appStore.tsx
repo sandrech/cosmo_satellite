@@ -17,7 +17,8 @@ import type {
 import type { SimulationGateway } from "../api/client";
 import { DEFAULT_SCENARIO } from "../api/scenarios";
 import { mockSimulationGateway } from "../api/runs";
-import { FallbackSimulationGateway, HttpSimulationGateway } from "../api/client";
+import { HttpSimulationGateway } from "../api/client";
+import { applyDynamicAnalysis, type DynamicAnalysisView } from "../api/frontendJsonAdapter";
 
 interface AppState {
   page: PageId;
@@ -27,6 +28,9 @@ interface AppState {
   frame: SimulationFrame | null;
   loading: boolean;
   error: string | null;
+  dynamicLoading: boolean;
+  dynamicError: string | null;
+  runDynamicAnalysis: () => Promise<void>;
   tS: number;
   setTS: (value: number) => void;
   clientId: string;
@@ -48,10 +52,10 @@ interface AppState {
 
 const StateContext = createContext<AppState | null>(null);
 
-const defaultSimulationGateway = new FallbackSimulationGateway(
-  new HttpSimulationGateway(),
-  mockSimulationGateway,
-);
+const defaultSimulationGateway: SimulationGateway =
+  ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_USE_MOCK === "1")
+    ? mockSimulationGateway
+    : new HttpSimulationGateway();
 
 export function AppStateProvider({
   children,
@@ -62,6 +66,9 @@ export function AppStateProvider({
   const [frame, setFrame] = useState<SimulationFrame | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dynamicAnalysis, setDynamicAnalysis] = useState<DynamicAnalysisView | null>(null);
+  const [dynamicLoading, setDynamicLoading] = useState(false);
+  const [dynamicError, setDynamicError] = useState<string | null>(null);
   const [tS, setTS] = useState(34680);
   const [clientId, setClientId] = useState("C65");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -85,7 +92,7 @@ export function AppStateProvider({
       .getFrame({ scenario, tS, clientId })
       .then((nextFrame) => {
         if (active) {
-          setFrame(nextFrame);
+          setFrame(applyDynamicAnalysis(nextFrame, dynamicAnalysis));
           setError(null);
         }
       })
@@ -99,6 +106,33 @@ export function AppStateProvider({
       active = false;
     };
   }, [gateway, scenario, tS, clientId]);
+
+  useEffect(() => {
+    setDynamicAnalysis(null);
+    setDynamicError(null);
+  }, [scenario]);
+
+  useEffect(() => {
+    if (!dynamicAnalysis) return;
+    setFrame((current) => current ? applyDynamicAnalysis(current, dynamicAnalysis) : current);
+  }, [dynamicAnalysis]);
+
+  const runDynamicAnalysis = async () => {
+    if (!gateway.getDynamicAnalysis) {
+      setDynamicError("Текущий gateway не поддерживает динамический анализ");
+      return;
+    }
+    setDynamicLoading(true);
+    setDynamicError(null);
+    try {
+      const analysis = await gateway.getDynamicAnalysis(scenario);
+      setDynamicAnalysis(analysis);
+    } catch (reason) {
+      setDynamicError(reason instanceof Error ? reason.message : "Ошибка динамического анализа");
+    } finally {
+      setDynamicLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!playing) return;
@@ -121,6 +155,9 @@ export function AppStateProvider({
       frame,
       loading,
       error,
+      dynamicLoading,
+      dynamicError,
+      runDynamicAnalysis,
       tS,
       setTS,
       clientId,
@@ -152,6 +189,9 @@ export function AppStateProvider({
       frame,
       loading,
       error,
+      dynamicLoading,
+      dynamicError,
+      runDynamicAnalysis,
       tS,
       clientId,
       selectedId,

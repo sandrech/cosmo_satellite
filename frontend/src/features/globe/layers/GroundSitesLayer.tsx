@@ -40,7 +40,7 @@ export function GroundSitesLayer({
           outlineWidth: 3,
         }}
         label={{
-          text: isGateway ? "GW1 · MUR" : site.id,
+          text: site.id,
           fillColor: Color.WHITE,
           outlineColor: Color.BLACK,
           outlineWidth: 4,
