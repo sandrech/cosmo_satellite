@@ -1,3 +1,10 @@
+from .workspace_state import (
+    FrontendWorkspaceStateDto,
+    decode_workspace_state,
+    encode_workspace_state,
+    workspace_state_codec,
+)
+from .frame_bundle import build_frontend_frame
 from .adapters import (
     decode_network,
     decode_scene,
@@ -104,5 +111,4 @@ from .comparison_dto import (
     VariantComparisonReportDto,
     VariantOutcomeDto,
 )
-
 __all__ = [name for name in globals() if not name.startswith("_")]

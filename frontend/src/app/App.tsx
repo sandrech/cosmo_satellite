@@ -1,32 +1,55 @@
-import { ExportDialog } from "../features/export/ExportDialog";
 import { useAppState } from "../shared/model/store";
 import type { PageId } from "../shared/model/types";
 import { PAGE_COMPONENTS, PAGE_LABELS } from "./router";
 
+const PAGE_ICONS: Record<PageId, string> = {
+  project: "▰",
+  analysis: "◒",
+  resilience: "△",
+  comparison: "⇄",
+};
+
 export default function App() {
-  const { page, setPage, scenario, frame } = useAppState();
+  const { page, setPage } = useAppState();
   const Page = PAGE_COMPONENTS[page];
+
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark">C</span><strong>COSMO</strong></div>
-        <nav>
+      <header className="workbench-header">
+        <button
+          className="workbench-app-button"
+          type="button"
+          title="Проект"
+          aria-label="Открыть проект"
+          onClick={() => setPage("project")}
+        >
+          ◈
+        </button>
+
+        <nav className="workbench-tabs" aria-label="Рабочие вкладки">
           {(Object.keys(PAGE_LABELS) as PageId[]).map((id) => (
             <button
               key={id}
-              className={page === id ? "active" : ""}
+              type="button"
+              className={`workbench-tab ${page === id ? "is-active" : ""}`}
               onClick={() => setPage(id)}
             >
-              {PAGE_LABELS[id]}
+              <span className="workbench-tab__grip" aria-hidden="true">⠿</span>
+              <span className="workbench-tab__icon" aria-hidden="true">{PAGE_ICONS[id]}</span>
+              <span>{PAGE_LABELS[id]}</span>
             </button>
           ))}
+          <button
+            className="workbench-tab-add"
+            type="button"
+            title="Новая вкладка"
+            aria-label="Новая вкладка"
+          >
+            +
+          </button>
         </nav>
-        <div className="topbar-actions">
-          <span className="source-indicator"><i />{frame?.source === "mock" ? "Mock gateway" : "Backend"}</span>
-          <span className="scenario-name">◈ {scenario.title}</span>
-          <ExportDialog />
-        </div>
       </header>
+
       <Page />
     </div>
   );

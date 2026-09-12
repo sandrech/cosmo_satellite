@@ -1,5 +1,6 @@
 export type PageId = "project" | "analysis" | "resilience" | "comparison";
 export type ViewMode = "3d" | "2d";
+export type EarthStyle = "black" | "imagery";
 export type ObjectId = string;
 
 export interface Vector3Km {

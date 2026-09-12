@@ -2,14 +2,16 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 310px;
+  background: var(--bg);
 }
 
 .analysis-workspace {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(330px, 1fr) 236px;
+  grid-template-rows: minmax(330px, 1fr) 220px;
   border-right: 1px solid var(--line);
+  background: var(--bg);
 }
 
 .globe-area,
@@ -18,6 +20,10 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.globe-view {
+  background: #141414;
 }
 
 .globe-view,
@@ -30,45 +36,120 @@
   image-rendering: auto;
 }
 
-.globe-view .cesium-widget-credits {
-  opacity: 0.55;
+.globe-view .cesium-viewer,
+.globe-view .cesium-widget,
+.globe-view .cesium-viewer-cesiumWidgetContainer {
+  background: #141414;
 }
 
+.globe-view .cesium-widget-credits {
+  opacity: 0.45;
+  transform: scale(0.9);
+  transform-origin: bottom right;
+}
+
+/* Controls copied from the reference workbench: compact, top-right, flat. */
 .globe-toolbar {
   position: absolute;
-  z-index: 10;
-  top: 14px;
-  left: 14px;
+  z-index: 20;
+  top: 10px;
+  right: 10px;
   display: flex;
+  align-items: center;
   gap: 8px;
+  pointer-events: none;
 }
 
-.segmented {
+.globe-toolbar > * {
+  pointer-events: auto;
+}
+
+.segmented,
+.globe-mode {
   display: flex;
+  height: 24px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(18, 21, 24, 0.92);
+  border-radius: 4px;
+  background: var(--panel);
 }
 
 .segmented button {
-  padding: 8px 11px;
+  display: grid;
+  min-width: 34px;
+  height: 22px;
+  place-items: center;
+  padding: 0 7px;
   border: 0;
+  border-right: 1px solid var(--line-soft);
   background: transparent;
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button:hover {
+  background: var(--panel-2);
+  color: var(--text);
 }
 
 .segmented button.active {
-  background: var(--accent-strong);
-  color: white;
+  background: var(--panel-3);
+  color: var(--text-bright);
+  font-weight: 700;
 }
 
-.control {
-  padding: 8px 11px;
+.globe-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.control,
+.globe-tool {
+  height: 24px;
+  padding: 0 8px;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(18, 21, 24, 0.92);
+  border-radius: 4px;
+  background: var(--panel-2);
   color: var(--text);
+  font-size: 11px;
+  line-height: 22px;
+}
+
+.globe-tool:hover {
+  border-color: var(--line-light);
+  background: var(--panel-3);
+  color: var(--text-bright);
+}
+
+.globe-tool.active,
+.earth-toggle.active {
+  border-color: rgba(226, 122, 29, 0.8);
+  background: rgba(226, 122, 29, 0.14);
+  color: #efb476;
+}
+
+.globe-tool-icon {
+  display: grid;
+  width: 26px;
+  min-width: 26px;
+  padding: 0;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.globe-tool-layers {
+  min-width: 62px;
+}
+
+.earth-toggle {
+  min-width: 56px;
 }
 
 .layer-control {
@@ -76,20 +157,40 @@
 }
 
 .layer-menu {
-  top: 42px;
-  left: 0;
+  top: 30px;
+  right: 0;
+  left: auto;
+  width: 185px;
+  min-width: 185px;
+  padding: 9px 10px;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.layer-menu strong {
+  padding-bottom: 4px;
+  color: var(--text-bright);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .layer-menu label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #d0d6dc;
-  font-size: 12px;
+  gap: 7px;
+  min-height: 20px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
 }
 
 .layer-menu input {
-  accent-color: var(--accent-strong);
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
 }
 
 .mock-badge,
@@ -97,59 +198,58 @@
 .frame-loading {
   position: absolute;
   z-index: 9;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 6px;
-  background: rgba(12, 15, 18, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(32, 32, 32, 0.84);
   color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.11em;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(6px);
 }
 
 .mock-badge {
-  right: 12px;
-  bottom: 12px;
-  padding: 7px 9px;
-  color: var(--yellow);
+  right: 10px;
+  bottom: 10px;
+  padding: 5px 7px;
+  color: #d89a5a;
 }
 
 .imagery-badge {
-  position: absolute;
-  z-index: 9;
-  bottom: 12px;
-  left: 12px;
-  padding: 7px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 6px;
-  background: rgba(12, 15, 18, 0.78);
-  color: #9ed1ff;
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  bottom: 10px;
+  left: 10px;
+  padding: 5px 7px;
+  color: #b7b7b7;
+}
+
+.is-graphite .imagery-badge {
+  color: #d89a5a;
 }
 
 .frame-loading {
-  top: 14px;
-  right: 14px;
-  padding: 7px 9px;
+  top: 42px;
+  right: 10px;
+  padding: 5px 7px;
 }
 
+/* KPI strip stays inside the viewport but adopts the reference panel styling. */
 .kpi-strip {
   position: absolute;
   z-index: 8;
-  right: 14px;
-  bottom: 14px;
-  left: 14px;
+  right: 10px;
+  bottom: 10px;
+  left: 112px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(17, 20, 23, 0.86);
-  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(32, 32, 32, 0.88);
+  backdrop-filter: blur(10px);
 }
 
 .kpi-strip > div {
   display: grid;
-  gap: 3px;
-  padding: 10px 14px;
+  gap: 2px;
+  padding: 7px 10px;
   border-right: 1px solid var(--line);
 }
 
@@ -159,22 +259,37 @@
 
 .kpi-strip span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   text-transform: uppercase;
 }
 
+.kpi-strip strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Timeline: flat strip like the reference playback block, no card styling. */
 .timeline-panel {
   z-index: 5;
-  padding: 13px 16px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 10px 9px;
   border-top: 1px solid var(--line);
-  background: #171a1d;
+  background: var(--panel);
 }
 
 .playback-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 8px;
+  min-height: 26px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.playback-controls strong {
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .muted {
@@ -182,17 +297,26 @@
 }
 
 .icon-button {
-  width: 28px;
-  height: 28px;
+  display: grid;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.icon-button:hover {
+  border-color: var(--line-light);
   background: var(--panel-3);
 }
 
 .time-slider {
   width: 100%;
   height: 4px;
-  margin: 13px 0 5px;
+  margin: 8px 0 4px;
   padding: 0;
   accent-color: var(--accent);
 }
@@ -200,19 +324,19 @@
 .time-scale {
   display: flex;
   justify-content: space-between;
-  color: #747d86;
+  color: var(--faint);
   font-size: 9px;
 }
 
 .availability-chart {
   display: grid;
-  gap: 7px;
-  margin-top: 10px;
+  gap: 5px;
+  margin-top: 8px;
 }
 
 .availability-legend {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   color: var(--muted);
   font-size: 9px;
 }
@@ -224,45 +348,45 @@
 }
 
 .availability-legend i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
 }
 
 .legend-path,
 .segment.path {
-  background: #4f91ca;
+  background: var(--accent);
 }
 
 .legend-visible,
 .segment.visible-only {
-  background: #d5b84e;
+  background: #b68a3a;
 }
 
 .legend-none,
 .segment.no-satellite {
-  background: #a9504e;
+  background: #8f4444;
 }
 
 .availability-row {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) 50px;
   align-items: center;
-  gap: 9px;
-  font-size: 10px;
+  gap: 8px;
+  font-size: 9px;
 }
 
 .availability-row > strong {
-  color: #a9dcad;
+  color: #9bc8a7;
   text-align: right;
 }
 
 .availability-track {
   position: relative;
-  height: 9px;
+  height: 8px;
   overflow: hidden;
-  border-radius: 2px;
-  background: #30353a;
+  border-radius: 1px;
+  background: #343434;
 }
 
 .segment {
@@ -281,6 +405,7 @@
   box-shadow: 0 0 5px white;
 }
 
+/* Keep the existing hierarchical Outliner and inspector; only harmonize colors. */
 .right-sidebar {
   min-height: 0;
   display: grid;
@@ -294,24 +419,25 @@
 }
 
 .sidebar-section h2 {
-  height: 39px;
+  height: 36px;
   margin: 0;
-  padding: 10px 13px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
-  font-size: 13px;
+  color: var(--text);
+  font-size: 11px;
   font-weight: 600;
 }
 
 .sidebar-scroll {
-  height: calc(100% - 39px);
+  height: calc(100% - 36px);
   overflow: auto;
-  padding: 7px 8px 16px;
+  padding: 5px 6px 14px;
 }
 
 .outliner .sidebar-scroll {
-  height: calc(100% - 79px);
-  padding: 5px 6px 16px;
+  height: calc(100% - 72px);
+  padding: 4px 5px 14px;
 }
 
 .outliner-search {
@@ -319,19 +445,19 @@
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 4px;
-  height: 40px;
-  padding: 6px 8px;
+  height: 36px;
+  padding: 5px 7px;
   border-bottom: 1px solid var(--line);
-  background: #121518;
-  color: #77818b;
+  background: var(--bg-subtle);
+  color: var(--faint);
 }
 
 .outliner-search input {
-  height: 28px;
-  padding: 5px 8px;
+  height: 26px;
+  padding: 4px 7px;
   border-radius: 4px;
-  background: #0d0f11;
-  font-size: 11px;
+  background: #141414;
+  font-size: 10px;
 }
 
 .tree-node {
@@ -350,7 +476,7 @@
   left: 21px;
   width: 1px;
   content: "";
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .tree-row {
@@ -359,23 +485,24 @@
   display: grid;
   grid-template-columns: 17px 19px minmax(0, 1fr) auto 25px;
   align-items: center;
-  min-height: 27px;
-  padding-top: 2px;
-  padding-right: 4px;
-  padding-bottom: 2px;
-  border-radius: 4px;
-  color: #c7cdd3;
-  font-size: 11px;
+  min-height: 25px;
+  padding-top: 1px;
+  padding-right: 3px;
+  padding-bottom: 1px;
+  border-radius: 3px;
+  color: #c9c9c9;
+  font-size: 10.5px;
   user-select: none;
 }
 
 .tree-row:hover {
-  background: #262a2e;
+  background: var(--panel-2);
 }
 
 .tree-row.selected {
-  background: #31536e;
-  color: white;
+  background: rgba(226, 122, 29, 0.16);
+  color: var(--text-bright);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .tree-expander,
@@ -389,9 +516,9 @@
 
 .tree-expander {
   width: 17px;
-  height: 24px;
-  color: #a6adb4;
-  font-size: 14px;
+  height: 22px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .tree-expander.placeholder {
@@ -400,33 +527,16 @@
 }
 
 .tree-kind {
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
 }
 
-.tree-kind-collection {
-  color: #a8c4db;
-}
-
-.tree-kind-plane {
-  color: #7cbbf4;
-}
-
-.tree-kind-satellite {
-  color: #e8eef4;
-}
-
-.tree-kind-ground {
-  color: #edc85f;
-}
-
-.tree-kind-gateway {
-  color: #71d39a;
-}
-
-.tree-kind-link {
-  color: #7bb6ec;
-}
+.tree-kind-collection { color: #b2b2b2; }
+.tree-kind-plane { color: #ce914f; }
+.tree-kind-satellite { color: #e8e8e8; }
+.tree-kind-ground { color: #c7a45c; }
+.tree-kind-gateway { color: #73b887; }
+.tree-kind-link { color: #b0b0b0; }
 
 .tree-label {
   overflow: hidden;
@@ -437,28 +547,28 @@
 .tree-badge {
   max-width: 72px;
   overflow: hidden;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
   background: rgba(255, 255, 255, 0.055);
-  color: #808a94;
-  font-size: 9px;
+  color: #858585;
+  font-size: 8.5px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .tree-eye {
   width: 25px;
-  height: 25px;
-  color: #c2c9d0;
+  height: 23px;
+  color: #b8b8b8;
 }
 
 .tree-eye:hover {
-  color: white;
+  color: var(--text-bright);
 }
 
 .tree-eye svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -467,7 +577,7 @@
 }
 
 .tree-node-hidden > .tree-row {
-  color: #69727b;
+  color: #676767;
 }
 
 .tree-node-hidden > .tree-row .tree-kind,
@@ -476,20 +586,20 @@
 }
 
 .tree-node-hidden > .tree-row .tree-eye {
-  color: #5e6871;
+  color: #5f5f5f;
 }
 
 .plane-row,
 .satellite-row {
   width: 100%;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   text-align: left;
 }
 
 .plane-row {
-  padding: 8px;
+  padding: 7px;
   font-weight: 650;
 }
 
@@ -498,18 +608,18 @@
   grid-template-columns: 12px 1fr auto;
   align-items: center;
   gap: 7px;
-  padding: 6px 8px 6px 27px;
-  color: #c3c9cf;
+  padding: 5px 7px 5px 27px;
+  color: #c3c3c3;
 }
 
 .satellite-row:hover,
 .satellite-row.selected {
-  background: #263440;
+  background: rgba(226, 122, 29, 0.12);
   color: white;
 }
 
 .satellite-row small {
-  color: #6f7a84;
+  color: #777;
 }
 
 .status {
@@ -518,17 +628,9 @@
   border-radius: 50%;
 }
 
-.status.active {
-  background: #dce3e8;
-}
-
-.status.failed {
-  background: var(--red);
-}
-
-.status.inactive {
-  border: 1px solid #68717a;
-}
+.status.active { background: #dcdcdc; }
+.status.failed { background: var(--red); }
+.status.inactive { border: 1px solid #686868; }
 
 .inspector {
   overflow: auto;
@@ -536,12 +638,12 @@
 
 .property-list,
 .empty-copy {
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
 
 .property-list h3 {
-  margin: 0 0 12px;
-  font-size: 18px;
+  margin: 0 0 10px;
+  font-size: 15px;
 }
 
 .property-list dl {
@@ -554,9 +656,9 @@
 .property-list dt,
 .property-list dd {
   margin: 0;
-  padding: 7px 0;
+  padding: 6px 0;
   border-top: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .property-list dt {
@@ -567,13 +669,817 @@
   .analysis-page {
     grid-template-columns: 1fr;
   }
+
   .right-sidebar {
     display: none;
   }
+
   .analysis-workspace {
     border: 0;
   }
+
+  .globe-toolbar {
+    right: 6px;
+    top: 6px;
+    gap: 5px;
+  }
+
+  .earth-toggle {
+    min-width: 48px;
+  }
+
   .kpi-strip {
+    left: 10px;
     grid-template-columns: 1fr 1fr;
   }
+}
+
+.globe-legend {
+  position: absolute;
+  z-index: 9;
+  top: 10px;
+  left: 10px;
+  display: grid;
+  gap: 4px;
+  min-width: 148px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(32, 32, 32, 0.82);
+  color: var(--muted);
+  font-size: 9.5px;
+  backdrop-filter: blur(7px);
+}
+
+.globe-legend > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 15px;
+}
+
+.legend-line {
+  display: block;
+  width: 22px;
+  border-top: 1px solid #a8a8a8;
+}
+
+.legend-line-link {
+  border-top-color: rgba(255, 255, 255, 0.35);
+  border-top-style: dashed;
+}
+
+.legend-line-route {
+  border-top: 2px solid var(--accent);
+}
+
+/* ========================================================================== 
+   Reference viewport layout: globe/map + compact timeline + side hierarchy
+   ========================================================================== */
+.analysis-page {
+  grid-template-columns: minmax(0, 1fr) 340px;
+  background: #151515;
+}
+
+.analysis-workspace {
+  grid-template-rows: minmax(0, 1fr) 54px;
+  background: #141414;
+}
+
+.globe-area {
+  background: #141414;
+  border-bottom: 1px solid var(--line);
+}
+
+.reference-viewport,
+.reference-map2d,
+.reference-globe3d {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #141414;
+}
+
+.reference-globe3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  image-rendering: auto;
+}
+
+.reference-globe3d canvas:active {
+  cursor: grabbing;
+}
+
+/* 2D map — same clean monochrome world map as the design archive. */
+.reference-map2d {
+  cursor: grab;
+  background-color: #141414;
+  background-image:
+    linear-gradient(rgba(45, 45, 45, 0.32) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 45, 45, 0.32) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.reference-map2d.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.reference-map2d svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.map-grid line {
+  stroke: #333333;
+  stroke-width: 0.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.56;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-land {
+  fill: #242424;
+  stroke: #343434;
+  stroke-width: 0.8;
+  opacity: 0.96;
+}
+
+.map-orbits path {
+  fill: none;
+  stroke: #bdbdbd;
+  stroke-width: 1;
+  opacity: 0.26;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-links line {
+  stroke: #8d8d8d;
+  stroke-width: 0.8;
+  stroke-dasharray: 2 4;
+  opacity: 0.24;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-route line {
+  stroke: var(--accent);
+  stroke-width: 1.7;
+  opacity: 0.92;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-satellite circle {
+  fill: #e8e8e8;
+  stroke: #101010;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-satellite.is-route circle {
+  fill: #fff;
+}
+
+.map-satellite.is-selected circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.map-ground rect {
+  fill: #d8d8d8;
+  stroke: #101010;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-ground.is-selected rect {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.map-satellite text,
+.map-ground text {
+  fill: #efefef;
+  stroke: #141414;
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.map-object {
+  cursor: pointer;
+}
+
+.map-scale,
+.globe-scale {
+  position: absolute;
+  z-index: 5;
+  bottom: 11px;
+  left: 11px;
+  width: 86px;
+  border-bottom: 2px solid #777;
+  color: #858585;
+  text-align: center;
+  pointer-events: none;
+}
+
+.map-scale::before,
+.map-scale::after,
+.globe-scale::before,
+.globe-scale::after {
+  position: absolute;
+  bottom: -2px;
+  width: 2px;
+  height: 7px;
+  content: "";
+  background: #777;
+}
+
+.map-scale::before,
+.globe-scale::before { left: 0; }
+.map-scale::after,
+.globe-scale::after { right: 0; }
+
+.map-scale span,
+.globe-scale span {
+  position: relative;
+  bottom: 4px;
+  font-size: 9px;
+}
+
+.map-coordinates,
+.globe-coordinates {
+  position: absolute;
+  z-index: 5;
+  right: 10px;
+  bottom: 10px;
+  color: #555;
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+/* The legend is deliberately small and flat, like the reference archive. */
+.globe-legend {
+  top: 10px;
+  left: 10px;
+  min-width: 174px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(32, 32, 32, 0.96);
+  box-shadow: none;
+}
+
+.globe-legend > div {
+  min-height: 19px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.legend-line {
+  width: 20px;
+}
+
+/* Exact control placement from the desired screenshots. */
+.globe-toolbar {
+  top: 10px;
+  right: 10px;
+  gap: 10px;
+}
+
+.globe-mode {
+  display: flex;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  pointer-events: auto;
+}
+
+.globe-mode button {
+  display: grid;
+  width: 34px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.globe-mode button:last-child {
+  border-right: 0;
+}
+
+.globe-mode button:hover {
+  background: var(--panel-2);
+  color: var(--text-bright);
+}
+
+.globe-mode button.is-active {
+  background: var(--raised);
+  color: #fff;
+  font-weight: 700;
+}
+
+.globe-tools {
+  gap: 4px;
+}
+
+.globe-tool {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 22px;
+}
+
+.globe-tool:hover {
+  border-color: var(--line-light);
+  background: var(--raised);
+  color: var(--text-bright);
+}
+
+.globe-tool-layers {
+  min-width: 62px;
+}
+
+.globe-tool-icon {
+  display: grid;
+  width: 26px;
+  min-width: 26px;
+  padding: 0;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.layer-menu {
+  top: 30px;
+  right: 0;
+  left: auto;
+  width: 192px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(40, 40, 40, 0.98);
+}
+
+.layer-menu label {
+  min-height: 22px;
+  font-size: 11px;
+}
+
+.layer-menu input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.frame-loading {
+  top: 43px;
+  right: 10px;
+  z-index: 18;
+}
+
+/* Bottom area: timeline only. No KPI strip, no lower data table. */
+.timeline-panel {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  height: 54px;
+  min-height: 54px;
+  padding: 6px 10px;
+  overflow: visible;
+  border-top: 0;
+  background: #202020;
+}
+
+.playback-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 26px;
+}
+
+.playback-transport {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-light);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 10px;
+}
+
+.icon-button:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+
+.playback-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line-light);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: #f2f2f2;
+  font: 600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.playback-time small {
+  color: var(--muted);
+  font: inherit;
+  font-weight: 400;
+}
+
+.timeline-track-wrap {
+  position: relative;
+  min-width: 140px;
+  padding-top: 4px;
+}
+
+.time-slider {
+  width: 100%;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  accent-color: #f1f1f1;
+}
+
+.time-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent) 0 42%, #d9d9d9 42% 100%);
+}
+
+.time-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+}
+
+.time-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1px;
+  color: #666;
+  font-size: 8px;
+}
+
+.playback-speed-label {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.playback-speeds {
+  display: flex;
+  height: 26px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.playback-speeds button {
+  min-width: 34px;
+  padding: 0 6px;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: #1b1b1b;
+  color: #777;
+  font-size: 9px;
+}
+
+.playback-speeds button:last-child {
+  border-right: 0;
+}
+
+.playback-speeds button.is-active {
+  background: var(--panel-3);
+  color: #fff;
+}
+
+/* Right hierarchy is retained, but detailed properties appear only after click. */
+.right-sidebar {
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--panel);
+}
+
+.analysis-page.has-selection .right-sidebar {
+  grid-template-rows: minmax(240px, 1fr) minmax(240px, 0.78fr);
+}
+
+.sidebar-section h2,
+.sidebar-heading {
+  height: 38px;
+  min-height: 38px;
+  margin: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-section > h2 {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-heading h2 {
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+
+.sidebar-close {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.sidebar-close:hover {
+  color: #fff;
+}
+
+.outliner-search {
+  margin: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #171717;
+}
+
+.outliner-search input {
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+}
+
+.outliner .sidebar-scroll {
+  height: calc(100% - 78px);
+}
+
+.tree-row {
+  min-height: 27px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+
+.tree-row:hover {
+  background: #292929;
+}
+
+.tree-row.selected {
+  background: #3a3a3a;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.inspector {
+  border-top: 1px solid var(--line);
+}
+
+.property-list {
+  padding: 8px 12px 16px;
+}
+
+.property-list h3 {
+  margin: 4px 0 10px;
+  color: #fff;
+  font-size: 15px;
+}
+
+.property-list dl {
+  margin: 0;
+}
+
+.property-list dl > * {
+  border-bottom-color: #333;
+}
+
+@media (max-width: 1100px) {
+  .analysis-page {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+
+  .timeline-panel {
+    grid-template-columns: auto minmax(140px, 1fr) auto;
+  }
+
+  .playback-speed-label {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Detailed monochrome earth texture (shared by 2D and 3D)
+   -------------------------------------------------------------------------- */
+.texture-earth-view,
+.texture-earth-view .cesium-viewer,
+.texture-earth-view .cesium-viewer-cesiumWidgetContainer,
+.texture-earth-view .cesium-widget,
+.texture-earth-view canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.texture-earth-view,
+.texture-earth-view .cesium-viewer,
+.texture-earth-view .cesium-widget {
+  background: #101112;
+}
+
+.texture-earth-view .cesium-widget-credits {
+  opacity: 0.28;
+  transform: scale(0.78);
+  transform-origin: bottom right;
+}
+
+.earth-texture-loading {
+  position: absolute;
+  top: 42px;
+  right: 10px;
+  z-index: 12;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(28, 28, 28, 0.92);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* Earth-texture mode deliberately suppresses the hand-drawn continent shapes. */
+.globe-view.is-imagery {
+  background: #101112;
+}
+
+.earth-texture-toggle {
+  min-width: 74px;
+}
+
+.earth-texture-toggle.is-active {
+  border-color: rgba(226, 122, 29, 0.72);
+  background: rgba(226, 122, 29, 0.13);
+  color: #f0b77c;
+}
+
+.save-state-button {
+  min-width: 92px;
+}
+
+.save-state-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.save-state-backend,
+.save-state-download {
+  border-color: rgba(98, 170, 119, 0.7);
+  color: #9ed4ad;
+}
+
+.save-state-error {
+  border-color: rgba(203, 85, 76, 0.72);
+  color: #e18d86;
+}
+
+@media (max-width: 1050px) {
+  .save-state-button {
+    min-width: 28px;
+    max-width: 82px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+}
+
+/* ========================================================================== 
+   Earth imagery modes + state saving
+   ========================================================================== */
+.reference-map2d {
+  background: #101112;
+}
+
+.map-earth-image {
+  pointer-events: none;
+  user-select: none;
+}
+
+.map-earth-image.is-mono {
+  opacity: 0.92;
+  filter: contrast(1.05) brightness(0.88);
+}
+
+.map-earth-image.is-imagery {
+  opacity: 0.94;
+  filter: saturate(0.95) contrast(1.04) brightness(0.86);
+}
+
+/* Grid is intentionally above the Earth texture, as in the design reference. */
+.map-grid line {
+  stroke: rgba(145, 150, 154, 0.24);
+  stroke-width: 0.55;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+
+.earth-toggle {
+  min-width: 56px;
+}
+
+.earth-toggle.is-active {
+  border-color: rgba(226, 122, 29, 0.84);
+  background: rgba(226, 122, 29, 0.16);
+  color: #f2b270;
+}
+
+.save-state-button {
+  min-width: 74px;
+  white-space: nowrap;
+}
+
+.save-state-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.save-state-button.is-backend,
+.save-state-button.is-download {
+  border-color: rgba(93, 176, 116, 0.7);
+  color: #9bd7aa;
+}
+
+.save-state-button.is-error {
+  border-color: rgba(202, 79, 79, 0.75);
+  color: #e58f8f;
+}
+
+.earth-imagery .legend-line-orbit,
+.earth-imagery .legend-line-link {
+  border-top-color: rgba(255, 255, 255, 0.48);
+}
+
+@media (max-width: 980px) {
+  .save-state-button {
+    min-width: 30px;
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* 2D reference: muted red route over the monochrome Earth, like the mockup. */
+.reference-map2d .map-route line {
+  stroke: #b84b4b;
+  stroke-width: 1.45;
+  stroke-dasharray: 5 4;
+  opacity: 0.9;
+}
+
+.reference-map2d .map-orbits path {
+  stroke: rgba(225, 228, 231, 0.82);
+  stroke-width: 0.9;
+  opacity: 0.46;
 }

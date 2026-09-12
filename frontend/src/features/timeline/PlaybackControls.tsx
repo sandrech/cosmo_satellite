@@ -10,19 +10,29 @@ export function formatTime(totalSeconds: number) {
 }
 
 export function PlaybackControls() {
-  const { playing, setPlaying, tS, scenario } = useAppState();
+  const { playing, setPlaying, tS, setTS, scenario } = useAppState();
+
+  const step = (direction: -1 | 1) => {
+    const next = tS + scenario.stepS * direction;
+    setTS(Math.min(Math.max(next, 0), scenario.horizonS - scenario.stepS));
+  };
+
   return (
     <div className="playback-controls">
-      <button
-        className="icon-button"
-        onClick={() => setPlaying(!playing)}
-        aria-label={playing ? "Пауза" : "Воспроизвести"}
-      >
-        {playing ? "Ⅱ" : "▶"}
+      <div className="playback-transport">
+        <button className="icon-button" type="button" onClick={() => setPlaying(!playing)} aria-label={playing ? "Пауза" : "Воспроизвести"}>
+          {playing ? "Ⅱ" : "▶"}
+        </button>
+        <button className="icon-button" type="button" onClick={() => step(-1)} aria-label="Шаг назад">◀</button>
+        <button className="icon-button" type="button" onClick={() => step(1)} aria-label="Шаг вперёд">▶</button>
+      </div>
+
+      <button className="playback-time" type="button" title="Текущее модельное время">
+        <span aria-hidden="true">▣</span>
+        {formatTime(tS)}
+        <small>(T+ {formatTime(tS)})</small>
+        <span aria-hidden="true">⌄</span>
       </button>
-      <strong>Таймлайн</strong>
-      <span>{formatTime(tS)} / 24:00:00</span>
-      <span className="muted">шаг {scenario.stepS} с</span>
     </div>
   );
 }
