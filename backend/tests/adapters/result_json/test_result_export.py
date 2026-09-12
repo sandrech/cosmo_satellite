@@ -64,3 +64,28 @@ def test_result_json_roundtrips_through_json_component() -> None:
     loaded = store.loads(rendered.value)
     assert isinstance(loaded, Ok)
     assert loaded.value == document
+
+
+def test_dynamic_analysis_projects_to_complete_mandatory_result_document() -> None:
+    from result_json import result_document_from_dynamic_analysis
+    from tests.dynamic_model.helpers import analyze_timeline
+
+    analysis = analyze_timeline({0: "S1", 10: None, 20: "S2"}, target=0.5)
+    scenario = {
+        "schema_version": "cosmo-A-1.0",
+        "environment": {"horizon_s": 30, "step_s": 10},
+        "design": {"satellites": [{"id": "S1"}, {"id": "S2"}]},
+        "ground_sites": [
+            {"id": "C", "role": "client"},
+            {"id": "G", "role": "gateway"},
+        ],
+    }
+
+    document = result_document_from_dynamic_analysis(scenario, analysis)
+
+    assert document.schema_version == "cosmo-A-result-1.0"
+    assert [(record.t_s, record.client_id, record.path) for record in document.routes] == [
+        (0, "C", ["C", "S1", "G"]),
+        (10, "C", []),
+        (20, "C", ["C", "S2", "G"]),
+    ]

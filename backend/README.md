@@ -11,15 +11,21 @@ backend/
 │   ├── json_component/                    # generic JSON persistence boundary
 │   ├── spatial3d/               # independent mathematical/spatial core
 │   ├── static_model/            # time-agnostic graph model and analysis
+│   ├── dynamic_model/           # complete time-grid model and temporal analysis
+│   ├── variant_comparison/      # baseline comparison of complete dynamic variants
 │   ├── cosmo_a_json/            # JSON → spatial adapter
+│   ├── cosmo_a_comparison_adapter/ # cosmo-A scenario → comparable configuration
 │   ├── spatial_static_adapter/  # spatial snapshot → static network
-│   └── result_json/             # analysis routes → cosmo-A-result-1.0 JSON
+│   ├── frontend_json/           # UI-facing versioned JSON projections
+│   └── result_json/             # full dynamic trace → cosmo-A-result-1.0 JSON
 ├── tests/
 │   ├── json/
 │   ├── spatial3d/
 │   ├── static_model/
 │   ├── adapters/cosmo_a_json/
 │   ├── adapters/spatial_static_adapter/
+│   ├── adapters/frontend_json/
+│   ├── adapters/result_json/
 │   ├── integration/
 │   └── fixtures/cosmo_a/
 ├── examples/
@@ -31,15 +37,19 @@ This is one installable project, not a collection of nested distributions. Packa
 
 ```text
 json_component ← cosmo_a_json → spatial3d
-                         ↑
-                         │
-                 spatial_static_adapter → static_model
-                                              ↑
-                                              │
-json_component ←──────────── result_json ─────┘
+                                  │
+                                  ▼
+                       spatial_static_adapter → static_model
+                                  │                 │
+                                  └──────► dynamic_model ◄──────┘
+                                                │
+                                      ┌─────────┴─────────┐
+                                      ▼                   ▼
+                                frontend_json         result_json
 
-spatial3d    (does not import JSON/Pydantic/UI/graph libraries)
-static_model (does not import JSON/spatial3d/UI and has no notion of time)
+spatial3d     (no JSON/Pydantic/UI/graph/dynamic dependency)
+static_model  (no JSON/spatial3d/UI dependency and no notion of time)
+dynamic_model (composes the two cores; does not reimplement their mathematics)
 ```
 
 Cross-component knowledge is kept in adapter packages: `cosmo_a_json` bridges persistence to spatial specifications, while `spatial_static_adapter` bridges frozen spatial snapshots to the static graph model.
@@ -100,7 +110,10 @@ pytest tests/json
 pytest tests/spatial3d
 pytest tests/adapters/cosmo_a_json
 pytest tests/static_model
+pytest tests/dynamic_model
+pytest tests/variant_comparison
 pytest tests/adapters/spatial_static_adapter
+pytest tests/adapters/frontend_json
 pytest tests/adapters/result_json
 pytest tests/integration
 ```
@@ -126,6 +139,14 @@ Mathematical 3D/spatial core assembled from replaceable policies. It knows nothi
 
 A time-agnostic network graph component. It keeps geometric visibility separate from end-to-end service, diagnoses the four required no-route causes, computes configurable routes, satellite-disjoint resilience and structured single-satellite failure impacts. Routing, coverage, reachability, diagnostics, failure domains and criticality ranking are replaceable policies. NetworkX remains behind the `GraphAlgorithms` contract. See `docs/components/static_model/ARCHITECTURE.md`.
 
+### `dynamic_model`
+
+Owns the discrete calculation grid and composes the complete `SpatialModel → StaticModel` pipeline at every sample. It derives visibility/service availability, exact outage intervals, route history and switching, temporal resilience, and period-wide counterfactual satellite criticality. The complete per-time spatial/static trace is preserved. See `docs/components/dynamic_model/ARCHITECTURE.md`.
+
+### `variant_comparison`
+
+Compares two or more complete `DynamicAnalysis` results on one common calculation grid. It preserves absolute per-variant outcomes and explicit baseline deltas for configuration changes, availability, outage causes, route characteristics, temporal resilience and satellite criticality. It does not choose a winner or hide trade-offs behind a synthetic score. See `docs/components/variant_comparison/ARCHITECTURE.md`.
+
 ### `cosmo_a_json`
 
 An adapter from the supplied `cosmo-A-1.0` persistence DTO to `SpatialSpecification`. This is an integration boundary, not part of either core.
@@ -141,15 +162,28 @@ Persistence adapter for the required `cosmo-A-result-1.0` output. It exports one
 The resulting runtime composition is:
 
 ```text
-JSON → DTO → SpatialSpecification → SpatialSnapshot(t) → StaticNetwork → StaticAnalysis
-                                                               │                │
-                                                               └──── rich Route ─┘
-                                                                        │
-                                                                        ▼
-                                                                 result_json → JSON
+JSON → DTO → SpatialModel
+                │
+                ▼
+          DynamicModel / TimeGrid
+                │
+                ├── t0 → SpatialSnapshot → StaticNetwork → StaticAnalysis
+                ├── t1 → SpatialSnapshot → StaticNetwork → StaticAnalysis
+                └── ...
+                │
+                ▼
+          DynamicAnalysis
+             │       │\
+             │       │ \____ variant_comparison
+             │       │             │
+             ▼       ▼             ▼
+      frontend_json  result_json   frontend_json
+             │           │             │
+             ▼           ▼             ▼
+        UI JSON     cosmo-A-result   comparison JSON
 ```
 
-The future dynamic component will own the time-grid loop around the last three steps.
+The time-grid loop is owned by `dynamic_model`; the static and spatial cores remain time-local.
 
 ## Frontend JSON adapters
 
@@ -157,6 +191,31 @@ The future dynamic component will own the time-grid loop around the last three s
 
 - `spatial-scene-1.0` for `spatial3d.SceneFrame`;
 - `spatial-network-1.0` for `spatial3d.NetworkProjection`;
-- `static-analysis-1.0` for `static_model.StaticAnalysis`.
+- `static-analysis-1.0` for `static_model.StaticAnalysis`;
+- `dynamic-analysis-1.0` for period-wide `dynamic_model.DynamicAnalysis`;
+- `variant-comparison-1.0` for baseline comparison of saved variants.
 
 The case-defined final calculation export remains the separate `result_json` component using `cosmo-A-result-1.0`.
+
+## Interactive model queries
+
+`model_query.ModelQuery` is the transport-independent facade intended for an
+interactive frontend. It does not introduce HTTP or any other network layer.
+
+```python
+snapshot = query.snapshot_at(12345.5)
+trace = query.sample_range(start_s=3600, end_s=4200, step_s=5)
+```
+
+`snapshot_at()` returns one complete scene + neutral network projection + full
+static analysis for an exact model time. `sample_range()` returns the same complete
+bundle for every sample in the half-open range `[start_s, end_s)` and may use a
+fractional presentation step.
+
+Frontend JSON adapters provide `model-snapshot-1.0` and `model-trace-1.0` through
+`encode_snapshot_bundle()` and `encode_sampled_trace()`.
+
+Playback speed is intentionally not part of the backend query contract. It is a UI
+presentation setting. The frontend may interpolate 3D positions for rendering
+between samples, but discrete facts such as activity, contacts, reachability and
+routes belong to calculated snapshots and must not be numerically interpolated.

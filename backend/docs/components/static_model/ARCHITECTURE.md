@@ -136,8 +136,8 @@ then coverage, ingress, gateway diversity, connectivity and route degradation. R
 separate `CriticalityRankingPolicy`; no unexplained weighted scalar is embedded in the model.
 
 Period-level satellite criticality (availability loss, extra outage time, max-outage increase)
-belongs to the future dynamic component, which will aggregate these snapshot impacts over the
-time grid.
+is owned by `dynamic_model`, which aggregates these snapshot impacts over the complete time
+grid and reconstructs counterfactual service/outage series.
 
 ## NetworkX boundary
 
