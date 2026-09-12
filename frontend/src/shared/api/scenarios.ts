@@ -218,6 +218,7 @@ function gatewayOutageFromCanonical(value: CosmoScenario["gateway_outages"][numb
 function draftFromCanonical(canonical: CosmoScenario): ScenarioDraft {
   return {
     schemaVersion: "cosmo-A-1.0",
+    canonical: structuredClone(canonical),
     id: canonical.meta.id,
     title: canonical.meta.title,
     altitudeKm: canonical.environment.altitude_km,

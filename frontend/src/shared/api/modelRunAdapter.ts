@@ -5,6 +5,8 @@ import type {
   NetworkLink,
   OrbitPath,
   RouteDetails,
+  SatelliteFrame,
+  GroundSite,
   RoutingStrategyId,
   RoutingStrategyOption,
   ScenarioDraft,
@@ -102,7 +104,6 @@ type DynamicClientDto = {
       unavailable: { intervals: IntervalDto[]; maximum_s: number; count: number };
     };
   };
-  resilience?: { n_minus_one: { fraction: number } };
 };
 type DynamicAnalysisDto = {
   schema_version: "dynamic-analysis-2.0";
@@ -136,6 +137,14 @@ export function isModelRunResponse(value: unknown): value is ModelRunResponseDto
 
 function vector(value: Vec3Dto): Vector3Km {
   return { xKm: value.x_km, yKm: value.y_km, zKm: value.z_km };
+}
+
+function ecefToLatLon(position: Vector3Km) {
+  const horizontal = Math.hypot(position.xKm, position.yKm);
+  return {
+    latDeg: (Math.atan2(position.zKm, horizontal) * 180) / Math.PI,
+    lonDeg: (Math.atan2(position.yKm, position.xKm) * 180) / Math.PI,
+  };
 }
 
 function routeDetails(route: RouteDto | null | undefined): RouteDetails | null {
@@ -193,7 +202,6 @@ function dynamicMetrics(dynamic: DynamicAnalysisDto): ClientMetrics[] {
     availability: client.service.availability.fraction * 100,
     maxOutageMinutes: client.service.availability.unavailable.maximum_s / 60,
     outages: client.service.availability.unavailable.count,
-    ...(client.resilience ? { nMinusOne: client.resilience.n_minus_one.fraction * 100 } : {}),
   }));
 }
 
@@ -267,9 +275,10 @@ export function frameFromModelRun(
   if (!snapshot) return null;
 
   const scenario = run.scenario;
-  const client =
-    snapshot.analysis.clients.find((item) => item.client_id === clientId) ??
-    snapshot.analysis.clients[0];
+  const client = snapshot.analysis.clients.find((item) => item.client_id === clientId);
+  if (!client) {
+    throw new Error(`Backend response does not contain requested client ${clientId}`);
+  }
   const routeMap: Record<string, RouteDetails | null> = {};
   for (const route of client?.routing.routes ?? []) {
     routeMap[route.strategy_id] = routeDetails(route);
@@ -284,35 +293,43 @@ export function frameFromModelRun(
   const groundDrafts = new Map(scenario.groundSites.map((item) => [item.id, item]));
   const networkAvailability = new Map(snapshot.network.nodes.map((item) => [item.id, item.available]));
 
-  const satellites = snapshot.scene.points
+  const satellites: SatelliteFrame[] = snapshot.scene.points
     .filter((point) => point.kind === "satellite")
     .map((point) => {
       const spec = satelliteDrafts.get(point.id);
       const available = networkAvailability.get(point.id) ?? point.available;
-      const deployed = (spec?.launchBatch ?? 1) <= scenario.launchStage;
+      const launchBatch = spec?.launchBatch ?? 1;
+      const notLaunched = launchBatch > scenario.launchStage;
+      const failed = scenario.failures.some(
+        (failure) => failure.satelliteId === point.id
+          && failure.startS <= snapshot.t_s
+          && snapshot.t_s < failure.endS,
+      );
       return {
         id: point.id,
         planeId: spec?.planeId ?? point.trajectory_group_id ?? "Orbit",
         active: available,
-        failed: deployed && !available,
-        inactiveReason: available ? null : deployed ? "failed" as const : "not-launched" as const,
-        launchBatch: spec?.launchBatch ?? 1,
+        failed,
+        inactiveReason: available ? null : notLaunched ? "not-launched" : failed ? "failed" : null,
+        launchBatch,
         position: vector(point.position),
       };
     });
 
-  const groundSites = snapshot.scene.points
+  const groundSites: GroundSite[] = snapshot.scene.points
     .filter((point) => point.kind === "client" || point.kind === "gateway")
     .map((point) => {
       const spec = groundDrafts.get(point.id);
+      const position = vector(point.position);
+      const fallback = ecefToLatLon(position);
       return {
         id: point.id,
         name: spec?.name ?? point.label ?? point.id,
         role: point.kind === "gateway" ? "gateway" as const : "client" as const,
-        latDeg: spec?.latDeg ?? 0,
-        lonDeg: spec?.lonDeg ?? 0,
+        latDeg: spec?.latDeg ?? fallback.latDeg,
+        lonDeg: spec?.lonDeg ?? fallback.lonDeg,
         available: networkAvailability.get(point.id) ?? point.available,
-        position: vector(point.position),
+        position,
       };
     });
 
@@ -344,10 +361,10 @@ export function frameFromModelRun(
     orbits: buildOrbitPaths(scenario, snapshot.t_s),
     metrics: dynamicMetrics(dynamic),
     availability,
-    outageReason: client?.service.no_route_reason ?? null,
+    outageReason: client.service.no_route_reason,
     reachableClients: snapshot.analysis.clients.filter((item) => item.service.reachable).length,
     clientCount: snapshot.analysis.clients.length,
-    currentConnectivity: client?.resilience?.satellite_connectivity.node_disjoint_path_count ?? null,
-    survivesAnySingleSatelliteFailure: client?.resilience?.survives_any_single_satellite_failure ?? null,
+    currentConnectivity: client.resilience?.satellite_connectivity.node_disjoint_path_count ?? null,
+    survivesAnySingleSatelliteFailure: client.resilience?.survives_any_single_satellite_failure ?? null,
   };
 }

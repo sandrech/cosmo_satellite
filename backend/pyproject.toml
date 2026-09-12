@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 cosmo-backend = "backend_api.server:main"
+cosmo-api = "api_service.app:main"
 
 [project.optional-dependencies]
 test = [
@@ -28,9 +29,6 @@ dev = [
   "pytest>=8.3",
   "numpy>=2,<3",
 ]
-
-[project.scripts]
-cosmo-api = "api_service.app:main"
 
 [tool.pytest.ini_options]
 addopts = "-q"

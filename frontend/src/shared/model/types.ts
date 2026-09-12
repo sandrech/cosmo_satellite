@@ -174,6 +174,8 @@ export interface GatewayOutageDraft {
 /** Complete editable representation of the cosmo-A-1.0 scenario. */
 export interface ScenarioDraft {
   schemaVersion: "cosmo-A-1.0";
+  /** Canonical snapshot retained for compatibility; serialize edits with scenarioToJson(). */
+  canonical: CosmoScenario;
   id: string;
   title: string;
   altitudeKm: number;
