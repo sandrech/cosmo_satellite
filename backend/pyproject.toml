@@ -9,6 +9,7 @@ description = "Backend components for the satellite-network project"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.11,<3",
+  "networkx>=3.5,<4",
 ]
 
 [project.optional-dependencies]

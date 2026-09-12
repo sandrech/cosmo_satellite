@@ -10,29 +10,39 @@ backend/
 ├── src/
 │   ├── json_component/                    # generic JSON persistence boundary
 │   ├── spatial3d/               # independent mathematical/spatial core
-│   └── cosmo_a_json/  # integration adapter
+│   ├── static_model/            # time-agnostic graph model and analysis
+│   ├── cosmo_a_json/            # JSON → spatial adapter
+│   ├── spatial_static_adapter/  # spatial snapshot → static network
+│   └── result_json/             # analysis routes → cosmo-A-result-1.0 JSON
 ├── tests/
 │   ├── json/
 │   ├── spatial3d/
+│   ├── static_model/
 │   ├── adapters/cosmo_a_json/
+│   ├── adapters/spatial_static_adapter/
+│   ├── integration/
 │   └── fixtures/cosmo_a/
 ├── examples/
 ├── tools/
 └── docs/components/
 ```
 
-This is one installable project, not three nested distributions. Package boundaries remain explicit so that dependencies still point in one direction:
+This is one installable project, not a collection of nested distributions. Package boundaries remain explicit so that dependencies still point in one direction:
 
 ```text
-json_component
-      ↑
-      │
-cosmo_a_json → spatial3d
+json_component ← cosmo_a_json → spatial3d
+                         ↑
+                         │
+                 spatial_static_adapter → static_model
+                                              ↑
+                                              │
+json_component ←──────────── result_json ─────┘
 
-spatial3d  (does not import JSON/Pydantic/UI/graph libraries)
+spatial3d    (does not import JSON/Pydantic/UI/graph libraries)
+static_model (does not import JSON/spatial3d/UI and has no notion of time)
 ```
 
-The integration adapter is deliberately the only package which knows both the JSON persistence representation and the spatial core.
+Cross-component knowledge is kept in adapter packages: `cosmo_a_json` bridges persistence to spatial specifications, while `spatial_static_adapter` bridges frozen spatial snapshots to the static graph model.
 
 ## Install
 
@@ -89,6 +99,10 @@ Individual groups:
 pytest tests/json
 pytest tests/spatial3d
 pytest tests/adapters/cosmo_a_json
+pytest tests/static_model
+pytest tests/adapters/spatial_static_adapter
+pytest tests/adapters/result_json
+pytest tests/integration
 ```
 
 ## Examples
@@ -108,14 +122,31 @@ Generic persistence infrastructure. It knows nothing about satellites or spatial
 
 Mathematical 3D/spatial core assembled from replaceable policies. It knows nothing about JSON, Pydantic, UI or graph routing. See `docs/components/spatial3d/ARCHITECTURE.md` and `TRACEABILITY.md`.
 
+### `static_model`
+
+A time-agnostic network graph component. It keeps geometric visibility separate from end-to-end service, diagnoses the four required no-route causes, computes configurable routes, satellite-disjoint resilience and structured single-satellite failure impacts. Routing, coverage, reachability, diagnostics, failure domains and criticality ranking are replaceable policies. NetworkX remains behind the `GraphAlgorithms` contract. See `docs/components/static_model/ARCHITECTURE.md`.
+
 ### `cosmo_a_json`
 
 An adapter from the supplied `cosmo-A-1.0` persistence DTO to `SpatialSpecification`. This is an integration boundary, not part of either core.
 
-The planned static-model component can later replace this direct adapter with:
+### `spatial_static_adapter`
+
+Converts `spatial3d.NetworkProjection` / `SpatialSnapshot` into the time-free `static_model.StaticNetwork`. The full-snapshot path preserves ground visibility and elevation while deliberately discarding the timestamp.
+
+### `result_json`
+
+Persistence adapter for the required `cosmo-A-result-1.0` output. It exports one `t_s`/`client_id`/`path` record for every time-grid/client pair while keeping rich route objects inside the domain model.
+
+The resulting runtime composition is:
 
 ```text
-JSON → persistence DTO → StaticModel → SpatialSpecification
+JSON → DTO → SpatialSpecification → SpatialSnapshot(t) → StaticNetwork → StaticAnalysis
+                                                               │                │
+                                                               └──── rich Route ─┘
+                                                                        │
+                                                                        ▼
+                                                                 result_json → JSON
 ```
 
-without changing `spatial3d`.
+The future dynamic component will own the time-grid loop around the last three steps.

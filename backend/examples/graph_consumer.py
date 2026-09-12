@@ -1,39 +1,13 @@
 from __future__ import annotations
 
-from collections import defaultdict, deque
 from pathlib import Path
 import sys
 
-from json_component import JsonStore, Ok as JsonOk
-from spatial3d import NetworkNodeKind, Ok as SpatialOk, SpatialModel, project_network
 from cosmo_a_json import adapt_scenario, scenario_codec
-
-
-def reachable_gateways(graph, client_id: str) -> set[str]:
-    nodes = {node.id: node for node in graph.nodes}
-    adjacency: dict[str, list[str]] = defaultdict(list)
-    for edge in graph.edges:
-        adjacency[edge.a].append(edge.b)
-        adjacency[edge.b].append(edge.a)
-
-    queue = deque([client_id])
-    visited = {client_id}
-    result: set[str] = set()
-    while queue:
-        current = queue.popleft()
-        for neighbour in adjacency[current]:
-            if neighbour in visited:
-                continue
-            node = nodes[neighbour]
-            if node.kind == NetworkNodeKind.GATEWAY:
-                if node.available:
-                    result.add(neighbour)
-                continue
-            if node.kind != NetworkNodeKind.SATELLITE or not node.available:
-                continue
-            visited.add(neighbour)
-            queue.append(neighbour)
-    return result
+from json_component import JsonStore, Ok as JsonOk
+from spatial3d import Ok as SpatialOk, SpatialModel
+from spatial_static_adapter import from_spatial_snapshot
+from static_model import Ok as StaticOk, StaticModel
 
 
 def main(path: Path, t_s: float) -> int:
@@ -43,20 +17,44 @@ def main(path: Path, t_s: float) -> int:
         return 2
 
     scenario = adapt_scenario(loaded.value)
-    built = SpatialModel.create(scenario.spatial)
-    if not isinstance(built, SpatialOk):
-        print(*built.error, sep="\n", file=sys.stderr)
+    spatial = SpatialModel.create(scenario.spatial)
+    if not isinstance(spatial, SpatialOk):
+        print(*spatial.error, sep="\n", file=sys.stderr)
         return 2
-    snap = built.value.snapshot(t_s)
-    if not isinstance(snap, SpatialOk):
-        print(*snap.error, sep="\n", file=sys.stderr)
+    snapshot = spatial.value.snapshot(t_s)
+    if not isinstance(snapshot, SpatialOk):
+        print(*snapshot.error, sep="\n", file=sys.stderr)
         return 2
 
-    graph = project_network(snap.value)
-    for node in graph.nodes:
-        if node.kind == NetworkNodeKind.CLIENT:
-            gateways = sorted(reachable_gateways(graph, node.id))
-            print(f"{node.id}: {gateways or 'no gateway'}")
+    static = StaticModel.create(from_spatial_snapshot(snapshot.value))
+    if not isinstance(static, StaticOk):
+        print(*static.error, sep="\n", file=sys.stderr)
+        return 2
+
+    analysis = static.value.analyze()
+    if not isinstance(analysis, StaticOk):
+        print(*analysis.error, sep="\n", file=sys.stderr)
+        return 2
+
+    for client in analysis.value.clients:
+        gateways = ", ".join(client.service.reachable_gateways) or "no gateway"
+        connectivity = (
+            client.resilience.satellite_connectivity.node_disjoint_path_count
+            if client.resilience is not None
+            else "disabled"
+        )
+        n_minus_one = (
+            "yes" if client.resilience is not None and client.resilience.survives_any_single_satellite_failure
+            else "no"
+        )
+        reason = client.service.no_route_reason.value if client.service.no_route_reason is not None else "-"
+        print(
+            f"{client.client_id}: {gateways}; "
+            f"visible={len(client.coverage.visible_satellites)}; "
+            f"usable-ingress={len(client.service.valid_ingress_satellites)}; "
+            f"satellite-connectivity={connectivity}; "
+            f"N-1={n_minus_one}; no-route-reason={reason}"
+        )
     return 0
 
 

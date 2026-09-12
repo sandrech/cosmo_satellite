@@ -3,25 +3,29 @@
 The repository is physically unified but component ownership remains separate.
 
 ```text
-                    ┌─────────────────────┐
-                    │  json_component     │
-                    └──────────▲──────────┘
-                               │
-                               │ persistence adapter uses Codec/JsonStore
-                               │
-┌─────────────────────┐   ┌────┴────────────────────────────┐
-│ spatial3d │◄──│ cosmo_a_json│
-└─────────────────────┘   └─────────────────────────────────┘
-          ▲
-          │
-          ├── future graph/dynamic component consumes network projection
-          └── future renderer/UI consumes scene projection
+json_component
+      ^
+      |
+cosmo_a_json ------> spatial3d ------> spatial_static_adapter ------> static_model
+                          |
+                          `-----------------------------------------> future 3D UI
+
+static_model ------------------------------------------------------> future dynamic aggregation
 ```
+
+The arrows describe dependency / data-adaptation direction, not ownership.
 
 Rules:
 
-1. `json_component` is infrastructure and imports no domain component.
-2. `spatial3d` is mathematical/domain infrastructure and imports no persistence, Pydantic, UI, or graph-routing component.
-3. Cross-component translation lives in an adapter package.
-4. Projection types are output contracts; consumers own graph algorithms and rendering.
-5. Future `StaticModel` should sit between persistence DTOs and the spatial specification rather than being absorbed into either component.
+1. `json_component` is persistence infrastructure and imports no domain component.
+2. `spatial3d` is mathematical/spatial infrastructure and imports no persistence, UI,
+   static-graph, or routing component.
+3. `cosmo_a_json` is the persistence-to-spatial adapter for the supplied case schema.
+4. `static_model` has no clock, orbital mechanics, JSON, or UI dependency. It analyses one
+   frozen network state.
+5. `spatial_static_adapter` is the only package that knows both spatial network projections
+   and the static graph representation.
+6. NetworkX is an implementation detail behind `static_model.GraphAlgorithms`; NetworkX graph
+   objects do not cross component boundaries.
+7. The future dynamic component will iterate spatial snapshots and aggregate static analyses
+   over time instead of embedding time into the static model.
