@@ -90,7 +90,7 @@ def test_static_analysis_adapter_exports_routes_resilience_impacts_and_ranking()
 
     assert isinstance(encoded, JsonOk)
     payload = encoded.value
-    assert payload["schema_version"] == "static-analysis-1.0"
+    assert payload["schema_version"] == "static-analysis-2.0"
     assert payload["summary"]["client_count"] == 3
     assert payload["clients"]
     first_client = payload["clients"][0]
@@ -101,6 +101,8 @@ def test_static_analysis_adapter_exports_routes_resilience_impacts_and_ranking()
     if selected is not None:
         assert selected["node_ids"][0] == first_client["client_id"]
         assert selected["metrics"]["hop_count"] == len(selected["segments"])
+        assert "objective_value" not in selected["metrics"]
+        assert selected["quality"]["dimensions"]
     assert payload["satellite_failure_impacts"]
     assert payload["satellite_failure_impacts"][0]["summary"]
     assert payload["satellite_criticality_ranking"]

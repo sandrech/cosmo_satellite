@@ -88,7 +88,7 @@ For each client the report compares:
 - every common route strategy.
 
 Route-strategy comparison includes availability, switches, mean hops, mean distance,
-mean objective and the number/fraction of samples whose logical node path differs.
+mean values of each named route-quality dimension and the number/fraction of samples whose logical node path differs.
 Path equality is a replaceable `RouteComparisonPolicy`; the reference implementation
 uses ordered node IDs, matching dynamic route-identity semantics.
 
@@ -108,5 +108,5 @@ differ.
 
 ## JSON
 
-`frontend_json` exports `VariantComparisonReport` as `variant-comparison-1.0`. The
+`frontend_json` exports `VariantComparisonReport` as `variant-comparison-2.0`. The
 JSON adapter is presentation-only and does not add transport or comparison semantics.

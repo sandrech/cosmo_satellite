@@ -9,6 +9,7 @@ from static_model import (
     ClientFailureImpact,
     NoRouteReason,
     Err as StaticErr,
+    PreferenceRelation,
     Route,
     StaticAnalysisPlan,
     StaticComponents,
@@ -33,6 +34,8 @@ from .types import (
     IntervalStatistics,
     NoRouteReasonStatistics,
     NumericStatistics,
+    QualityDimensionStatistics,
+    QualityRelationStatistics,
     RankedSatelliteCriticality,
     RouteEpisode,
     RouteStrategyFailureTemporalImpact,
@@ -353,7 +356,37 @@ class DynamicModel:
             switches=tuple(switches),
             hop_count=self._numeric(tuple(float(route.metrics.hop_count) for route in routes)),
             total_distance_km=self._numeric(tuple(route.metrics.total_distance_km for route in routes)),
-            objective_value=self._numeric(tuple(route.metrics.objective_value for route in routes)),
+            quality_dimensions=self._quality_statistics(routes),
+        )
+
+    def _quality_statistics(self, routes: tuple[Route, ...]) -> tuple[QualityDimensionStatistics, ...]:
+        if not routes:
+            return ()
+        schema = tuple((item.name, item.direction) for item in routes[0].quality.dimensions)
+        for route in routes[1:]:
+            current = tuple((item.name, item.direction) for item in route.quality.dimensions)
+            if current != schema:
+                raise ValueError("route quality schema changed across time for one strategy")
+        return tuple(
+            QualityDimensionStatistics(
+                name=name,
+                direction=direction,
+                values=self._numeric(tuple(route.quality.value(name) for route in routes)),
+            )
+            for name, direction in schema
+        )
+
+    @staticmethod
+    def _quality_relation_statistics(
+        relations: tuple[PreferenceRelation, ...],
+    ) -> QualityRelationStatistics:
+        counts = Counter(relations)
+        return QualityRelationStatistics(
+            sample_count=len(relations),
+            better_count=counts[PreferenceRelation.BETTER],
+            equal_count=counts[PreferenceRelation.EQUAL],
+            worse_count=counts[PreferenceRelation.WORSE],
+            incomparable_count=counts[PreferenceRelation.INCOMPARABLE],
         )
 
     def _aggregate_network_summary(self, frames: tuple[DynamicFrame, ...]) -> DynamicNetworkSummary:
@@ -413,7 +446,7 @@ class DynamicModel:
                 connectivity_loss = 0
                 route_lost = Counter[str]()
                 route_changed = Counter[str]()
-                objective_increases: dict[str, list[float]] = defaultdict(list)
+                quality_relations: dict[str, list[PreferenceRelation]] = defaultdict(list)
                 counterfactual_routes: dict[str, list[RouteTimeSample]] = {
                     strategy_id: [] for strategy_id in strategy_ids
                 }
@@ -443,8 +476,8 @@ class DynamicModel:
                         delta = delta_by_strategy[strategy_id]
                         route_lost[strategy_id] += int(delta.route_lost)
                         route_changed[strategy_id] += int(delta.path_changed)
-                        if delta.objective_increase is not None:
-                            objective_increases[strategy_id].append(delta.objective_increase)
+                        if delta.quality_change is not None:
+                            quality_relations[strategy_id].append(delta.quality_change)
                         counterfactual_routes[strategy_id].append(RouteTimeSample(frame.t_s, delta.after))
 
                 counterfactual = self._availability(tuple(counterfactual_reachable))
@@ -480,7 +513,7 @@ class DynamicModel:
                         route_lost_s=route_lost[strategy_id] * self.grid.step_s,
                         path_changed_samples=route_changed[strategy_id],
                         path_changed_s=route_changed[strategy_id] * self.grid.step_s,
-                        objective_increase=self._numeric(tuple(objective_increases[strategy_id])),
+                        quality_changes=self._quality_relation_statistics(tuple(quality_relations[strategy_id])),
                     ))
                 route_impacts = tuple(route_impacts_list)
 

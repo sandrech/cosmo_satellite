@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from spatial3d import SpatialSnapshot
-from static_model import ClientSnapshotAnalysis, NoRouteReason, Route, StaticAnalysis
+from static_model import (
+    ClientSnapshotAnalysis,
+    NoRouteReason,
+    PreferenceRelation,
+    QualityDirection,
+    Route,
+    StaticAnalysis,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +128,30 @@ class RouteSwitch:
 
 
 @dataclass(frozen=True, slots=True)
+class QualityDimensionStatistics:
+    name: str
+    direction: QualityDirection
+    values: NumericStatistics
+
+
+@dataclass(frozen=True, slots=True)
+class QualityRelationStatistics:
+    sample_count: int
+    better_count: int
+    equal_count: int
+    worse_count: int
+    incomparable_count: int
+
+    def count(self, relation: PreferenceRelation) -> int:
+        return {
+            PreferenceRelation.BETTER: self.better_count,
+            PreferenceRelation.EQUAL: self.equal_count,
+            PreferenceRelation.WORSE: self.worse_count,
+            PreferenceRelation.INCOMPARABLE: self.incomparable_count,
+        }[relation]
+
+
+@dataclass(frozen=True, slots=True)
 class RouteStrategyTemporalAnalysis:
     strategy_id: str
     samples: tuple[RouteTimeSample, ...]
@@ -129,7 +160,7 @@ class RouteStrategyTemporalAnalysis:
     switches: tuple[RouteSwitch, ...]
     hop_count: NumericStatistics
     total_distance_km: NumericStatistics
-    objective_value: NumericStatistics
+    quality_dimensions: tuple[QualityDimensionStatistics, ...]
 
     @property
     def switch_count(self) -> int:
@@ -194,7 +225,7 @@ class RouteStrategyFailureTemporalImpact:
     route_lost_s: int
     path_changed_samples: int
     path_changed_s: int
-    objective_increase: NumericStatistics
+    quality_changes: QualityRelationStatistics
 
 
 @dataclass(frozen=True, slots=True)

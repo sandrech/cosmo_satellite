@@ -5,6 +5,8 @@ from dynamic_model import (
     DynamicAnalysis,
     IntervalStatistics,
     NumericStatistics,
+    QualityDimensionStatistics,
+    QualityRelationStatistics,
 )
 from json_component.pydantic_adapter import PydanticCodec
 
@@ -24,6 +26,8 @@ from .dynamic_dto import (
     IntervalStatisticsDto,
     NoRouteReasonStatisticsDto,
     NumericStatisticsDto,
+    QualityDimensionStatisticsDto,
+    QualityRelationStatisticsDto,
     RankedSatelliteCriticalityDto,
     RouteEpisodeDto,
     RouteStrategyFailureTemporalImpactDto,
@@ -70,6 +74,24 @@ def _numeric(value: NumericStatistics) -> NumericStatisticsDto:
     )
 
 
+def _quality_dimension(value: QualityDimensionStatistics) -> QualityDimensionStatisticsDto:
+    return QualityDimensionStatisticsDto(
+        name=value.name,
+        direction=value.direction.value,
+        values=_numeric(value.values),
+    )
+
+
+def _quality_relations(value: QualityRelationStatistics) -> QualityRelationStatisticsDto:
+    return QualityRelationStatisticsDto(
+        sample_count=value.sample_count,
+        better_count=value.better_count,
+        equal_count=value.equal_count,
+        worse_count=value.worse_count,
+        incomparable_count=value.incomparable_count,
+    )
+
+
 def dynamic_analysis_to_dto(value: DynamicAnalysis) -> DynamicAnalysisDto:
     clients = []
     for client in value.clients:
@@ -108,7 +130,7 @@ def dynamic_analysis_to_dto(value: DynamicAnalysis) -> DynamicAnalysisDto:
                 switch_count=strategy.switch_count,
                 hop_count=_numeric(strategy.hop_count),
                 total_distance_km=_numeric(strategy.total_distance_km),
-                objective_value=_numeric(strategy.objective_value),
+                quality_dimensions=[_quality_dimension(item) for item in strategy.quality_dimensions],
             ))
 
         clients.append(ClientDynamicAnalysisDto(
@@ -186,7 +208,7 @@ def dynamic_analysis_to_dto(value: DynamicAnalysis) -> DynamicAnalysisDto:
                         route_lost_s=route.route_lost_s,
                         path_changed_samples=route.path_changed_samples,
                         path_changed_s=route.path_changed_s,
-                        objective_increase=_numeric(route.objective_increase),
+                        quality_changes=_quality_relations(route.quality_changes),
                     )
                     for route in item.route_impacts
                 ],

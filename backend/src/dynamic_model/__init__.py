@@ -23,6 +23,8 @@ from .types import (
     IntervalStatistics,
     NoRouteReasonStatistics,
     NumericStatistics,
+    QualityDimensionStatistics,
+    QualityRelationStatistics,
     RankedSatelliteCriticality,
     RouteEpisode,
     RouteStrategyFailureTemporalImpact,

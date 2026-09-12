@@ -113,6 +113,28 @@ class NumericStatisticsDto(StrictModel):
         return self
 
 
+class QualityDimensionStatisticsDto(StrictModel):
+    name: str
+    direction: Literal["maximize", "minimize"]
+    values: NumericStatisticsDto
+
+
+class QualityRelationStatisticsDto(StrictModel):
+    sample_count: int = Field(ge=0)
+    better_count: int = Field(ge=0)
+    equal_count: int = Field(ge=0)
+    worse_count: int = Field(ge=0)
+    incomparable_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_partition(self) -> "QualityRelationStatisticsDto":
+        if self.sample_count != (
+            self.better_count + self.equal_count + self.worse_count + self.incomparable_count
+        ):
+            raise ValueError("quality relation counts must partition sample_count")
+        return self
+
+
 class NoRouteReasonStatisticsDto(StrictModel):
     reason: Literal[
         "no_visible_satellite",
@@ -169,7 +191,7 @@ class RouteStrategyTemporalAnalysisDto(StrictModel):
     switch_count: int = Field(ge=0)
     hop_count: NumericStatisticsDto
     total_distance_km: NumericStatisticsDto
-    objective_value: NumericStatisticsDto
+    quality_dimensions: list[QualityDimensionStatisticsDto]
 
     @model_validator(mode="after")
     def validate_routes(self) -> "RouteStrategyTemporalAnalysisDto":
@@ -230,7 +252,7 @@ class RouteStrategyFailureTemporalImpactDto(StrictModel):
     route_lost_s: int = Field(ge=0)
     path_changed_samples: int = Field(ge=0)
     path_changed_s: int = Field(ge=0)
-    objective_increase: NumericStatisticsDto
+    quality_changes: QualityRelationStatisticsDto
 
     @model_validator(mode="after")
     def validate_switch_delta(self) -> "RouteStrategyFailureTemporalImpactDto":
@@ -292,7 +314,7 @@ class DynamicNetworkSummaryDto(StrictModel):
 
 
 class DynamicAnalysisDto(StrictModel):
-    schema_version: Literal["dynamic-analysis-1.0"] = "dynamic-analysis-1.0"
+    schema_version: Literal["dynamic-analysis-2.0"] = "dynamic-analysis-2.0"
     grid: TimeGridDto
     target_availability: float = Field(ge=0.0, le=1.0)
     summary: DynamicNetworkSummaryDto

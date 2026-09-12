@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 import math
 
 import networkx as nx
@@ -60,16 +61,40 @@ class NetworkXGraphAlgorithms:
         if source_id not in graph or target_id not in graph or roles.get(target_id) != TraversalRole.TARGET:
             return None
 
-        def weight(_u: str, _v: str, attributes: dict[str, object]) -> float:
-            value = float(cost_policy.cost(attributes["link"]))  # type: ignore[arg-type]
-            if not math.isfinite(value) or value < 0:
-                raise ValueError("route cost must be finite and non-negative")
-            return value
+        # Dijkstra with an explicit deterministic total order.  The primary
+        # criterion remains the configured non-negative additive cost; equal
+        # costs are resolved by fewer hops and then lexicographic node path.
+        # NetworkX's public shortest_path contract does not promise those
+        # secondary tie-breaks, while routing results are persisted and should
+        # be reproducible.
+        start_path = (source_id,)
+        queue: list[tuple[float, int, tuple[str, ...], str]] = [
+            (0.0, 0, start_path, source_id)
+        ]
+        best: dict[str, tuple[float, int, tuple[str, ...]]] = {
+            source_id: (0.0, 0, start_path)
+        }
 
-        try:
-            return tuple(nx.shortest_path(graph, source_id, target_id, weight=weight, method="dijkstra"))
-        except nx.NetworkXNoPath:
-            return None
+        while queue:
+            total_cost, hops, path, node_id = heapq.heappop(queue)
+            if best.get(node_id) != (total_cost, hops, path):
+                continue
+            if node_id == target_id:
+                return path
+
+            for neighbor in sorted(graph.successors(node_id)):
+                link = graph[node_id][neighbor]["link"]
+                edge_cost = float(cost_policy.cost(link))
+                if not math.isfinite(edge_cost) or edge_cost < 0:
+                    raise ValueError("route cost must be finite and non-negative")
+                candidate_path = (*path, neighbor)
+                candidate = (total_cost + edge_cost, hops + 1, candidate_path)
+                current = best.get(neighbor)
+                if current is None or candidate < current:
+                    best[neighbor] = candidate
+                    heapq.heappush(queue, (*candidate, neighbor))
+
+        return None
 
     def satellite_connectivity(
         self,

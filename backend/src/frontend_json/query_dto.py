@@ -9,7 +9,7 @@ from .dto import NetworkProjectionDto, SceneFrameDto, StaticAnalysisDto, StrictM
 
 
 class SnapshotBundleDto(StrictModel):
-    schema_version: Literal["model-snapshot-1.0"] = "model-snapshot-1.0"
+    schema_version: Literal["model-snapshot-2.0"] = "model-snapshot-2.0"
     t_s: float
     scene: SceneFrameDto
     network: NetworkProjectionDto
@@ -37,7 +37,7 @@ class SamplingRangeDto(StrictModel):
 
 
 class SampledTraceDto(StrictModel):
-    schema_version: Literal["model-trace-1.0"] = "model-trace-1.0"
+    schema_version: Literal["model-trace-2.0"] = "model-trace-2.0"
     sampling: SamplingRangeDto
     frames: list[SnapshotBundleDto]
 

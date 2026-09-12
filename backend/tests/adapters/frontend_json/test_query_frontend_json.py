@@ -31,10 +31,10 @@ def test_snapshot_bundle_json_round_trip() -> None:
 
     encoded = encode_snapshot_bundle(snapshot.value)
     assert isinstance(encoded, JsonOk)
-    assert encoded.value["schema_version"] == "model-snapshot-1.0"
+    assert encoded.value["schema_version"] == "model-snapshot-2.0"
     assert encoded.value["scene"]["schema_version"] == "spatial-scene-1.0"
     assert encoded.value["network"]["schema_version"] == "spatial-network-1.0"
-    assert encoded.value["analysis"]["schema_version"] == "static-analysis-1.0"
+    assert encoded.value["analysis"]["schema_version"] == "static-analysis-2.0"
 
     text = dumps(encoded.value)
     assert isinstance(text, JsonOk)
@@ -51,7 +51,7 @@ def test_sampled_trace_json_round_trip() -> None:
 
     encoded = encode_sampled_trace(trace.value)
     assert isinstance(encoded, JsonOk)
-    assert encoded.value["schema_version"] == "model-trace-1.0"
+    assert encoded.value["schema_version"] == "model-trace-2.0"
     assert [frame["t_s"] for frame in encoded.value["frames"]] == [0.0, 0.5]
 
     decoded = decode_sampled_trace(encoded.value)

@@ -2,7 +2,15 @@ import json
 
 from json_component import JsonStore, Ok
 from result_json import ResultDocumentDto, result_codec, route_record
-from static_model import LinkKind, Route, RouteMetrics, RouteSegment
+from static_model import (
+    LinkKind,
+    QualityDimension,
+    QualityDirection,
+    Route,
+    RouteMetrics,
+    RouteQuality,
+    RouteSegment,
+)
 
 
 def scenario() -> dict:
@@ -27,7 +35,8 @@ def test_result_export_matches_mandatory_cosmo_result_shape() -> None:
             RouteSegment("C", "S1", LinkKind.GROUND_SATELLITE, 10),
             RouteSegment("S1", "G", LinkKind.GROUND_SATELLITE, 20),
         ),
-        metrics=RouteMetrics(2, 30, 2),
+        metrics=RouteMetrics(2, 30),
+        quality=RouteQuality((QualityDimension("hop_count", 2.0, QualityDirection.MINIMIZE),)),
     )
     document = ResultDocumentDto(
         effective_scenario=scenario(),

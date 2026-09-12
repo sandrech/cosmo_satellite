@@ -54,6 +54,7 @@ def test_comparison_preserves_raw_outcomes_and_baseline_deltas() -> None:
     assert route.path_difference_samples == 1
     assert route.path_difference_fraction == 0.2
     assert route.switch_count.delta == 1.0
+    assert route.quality_dimensions
 
     changes = {item.path: item for item in comparison.configuration_changes}
     assert changes["environment.isl_range_km"].numeric_delta == -500.0
@@ -83,6 +84,6 @@ def test_comparison_json_projection_is_strict_and_versioned() -> None:
 
     encoded = encode_comparison_report(compared.value)
     assert isinstance(encoded, JsonOk)
-    assert encoded.value["schema_version"] == "variant-comparison-1.0"
+    assert encoded.value["schema_version"] == "variant-comparison-2.0"
     assert encoded.value["baseline_variant_id"] == "a"
     assert encoded.value["comparisons"][0]["variant_id"] == "b"

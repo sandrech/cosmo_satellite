@@ -26,7 +26,7 @@ mandatory definitions:
 
 - outage count/total/average duration;
 - route episodes and direct route switches;
-- route hop/distance/objective summaries;
+- route hop/distance summaries plus structured route-quality dimension summaries;
 - N-1 resilience over time;
 - period-wide counterfactual satellite criticality.
 

@@ -18,6 +18,7 @@ from .types import (
     ParameterChange,
     ParameterChangeKind,
     Presence,
+    QualityDimensionComparison,
     RouteStrategyComparison,
     SatelliteCriticalityComparison,
     VariantComparisonReport,
@@ -298,10 +299,34 @@ class VariantComparator:
                                       None if after is None else after.hop_count.mean),
                 mean_total_distance_km=_delta(None if before is None else before.total_distance_km.mean,
                                               None if after is None else after.total_distance_km.mean),
-                mean_objective_value=_delta(None if before is None else before.objective_value.mean,
-                                            None if after is None else after.objective_value.mean),
+                quality_dimensions=self._compare_quality_dimensions(before, after),
                 path_difference_samples=path_differences,
                 path_difference_fraction=path_fraction,
+            ))
+        return tuple(result)
+
+    @staticmethod
+    def _compare_quality_dimensions(
+        baseline: RouteStrategyTemporalAnalysis | None,
+        variant: RouteStrategyTemporalAnalysis | None,
+    ) -> tuple[QualityDimensionComparison, ...]:
+        left = {} if baseline is None else {item.name: item for item in baseline.quality_dimensions}
+        right = {} if variant is None else {item.name: item for item in variant.quality_dimensions}
+        result: list[QualityDimensionComparison] = []
+        for name in sorted(left.keys() | right.keys()):
+            before = left.get(name)
+            after = right.get(name)
+            if before is not None and after is not None and before.direction != after.direction:
+                raise ValueError(f"route quality dimension {name!r} changed direction between variants")
+            direction = before.direction if before is not None else after.direction  # type: ignore[union-attr]
+            result.append(QualityDimensionComparison(
+                name=name,
+                direction=direction.value,
+                presence=_presence(before, after),
+                mean_value=_delta(
+                    None if before is None else before.values.mean,
+                    None if after is None else after.values.mean,
+                ),
             ))
         return tuple(result)
 

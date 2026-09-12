@@ -3,7 +3,13 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Protocol
 
-from .analysis import NoRouteReason, SatelliteConnectivity, SatelliteFailureImpact
+from .analysis import (
+    NoRouteReason,
+    PreferenceRelation,
+    RouteQuality,
+    SatelliteConnectivity,
+    SatelliteFailureImpact,
+)
 from .types import Link, Node, StaticNetwork
 
 
@@ -88,3 +94,20 @@ class GraphAlgorithms(Protocol):
         policy: ReachabilityPolicy,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> SatelliteConnectivity: ...
+
+
+class RoutingStrategy(Protocol):
+    id: str
+
+    def select_path(
+        self,
+        network: StaticNetwork,
+        source_id: str,
+        target_ids: tuple[str, ...],
+        reachability: ReachabilityPolicy,
+        graph_algorithms: GraphAlgorithms,
+        failure_domain: FailureDomainPolicy,
+        excluded_nodes: frozenset[str] = frozenset(),
+    ) -> tuple[tuple[str, ...], RouteQuality] | None: ...
+
+    def compare_quality(self, lhs: RouteQuality, rhs: RouteQuality) -> PreferenceRelation: ...

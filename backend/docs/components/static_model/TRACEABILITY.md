@@ -17,7 +17,7 @@ geometry.
 | No route: no gateway contact | `NoRouteReason.NO_GATEWAY_CONTACT` |
 | No route: gateway unavailable | `NoRouteReason.GATEWAY_UNAVAILABLE` |
 | Route hop count includes both ground links | `RouteMetrics.hop_count == len(node_ids) - 1` |
-| Team chooses routing method | `StaticAnalysisPlan.route_strategies` + `RouteCostPolicy` |
+| Team chooses routing method | `StaticAnalysisPlan.route_strategies` + `RoutingStrategy`; additive `RouteCostPolicy` is only one implementation family |
 | Additional vulnerable-satellite analysis | `SatelliteFailureImpact` + `CriticalityRankingPolicy` |
 | Reserve paths / N-1 analysis | `SatelliteConnectivity`, min cut, critical satellites |
 | NetworkX is an implementation detail | `GraphAlgorithms` protocol |

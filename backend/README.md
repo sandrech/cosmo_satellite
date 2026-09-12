@@ -191,9 +191,9 @@ The time-grid loop is owned by `dynamic_model`; the static and spatial cores rem
 
 - `spatial-scene-1.0` for `spatial3d.SceneFrame`;
 - `spatial-network-1.0` for `spatial3d.NetworkProjection`;
-- `static-analysis-1.0` for `static_model.StaticAnalysis`;
-- `dynamic-analysis-1.0` for period-wide `dynamic_model.DynamicAnalysis`;
-- `variant-comparison-1.0` for baseline comparison of saved variants.
+- `static-analysis-2.0` for `static_model.StaticAnalysis`;
+- `dynamic-analysis-2.0` for period-wide `dynamic_model.DynamicAnalysis`;
+- `variant-comparison-2.0` for baseline comparison of saved variants.
 
 The case-defined final calculation export remains the separate `result_json` component using `cosmo-A-result-1.0`.
 
@@ -212,7 +212,7 @@ static analysis for an exact model time. `sample_range()` returns the same compl
 bundle for every sample in the half-open range `[start_s, end_s)` and may use a
 fractional presentation step.
 
-Frontend JSON adapters provide `model-snapshot-1.0` and `model-trace-1.0` through
+Frontend JSON adapters provide `model-snapshot-2.0` and `model-trace-2.0` through
 `encode_snapshot_bundle()` and `encode_sampled_trace()`.
 
 Playback speed is intentionally not part of the backend query contract. It is a UI

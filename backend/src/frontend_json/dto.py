@@ -119,10 +119,28 @@ class RouteSegmentDto(StrictModel):
     elevation_deg: float | None = Field(default=None, ge=-90.0, le=90.0)
 
 
+class QualityDimensionDto(StrictModel):
+    name: str
+    value: float
+    direction: Literal["maximize", "minimize"]
+
+
+class RouteQualityDto(StrictModel):
+    dimensions: list[QualityDimensionDto]
+
+    @model_validator(mode="after")
+    def validate_dimensions(self) -> "RouteQualityDto":
+        names = [item.name for item in self.dimensions]
+        if not names or any(not name.strip() for name in names):
+            raise ValueError("route quality requires non-empty named dimensions")
+        if len(names) != len(set(names)):
+            raise ValueError("route quality dimension names must be unique")
+        return self
+
+
 class RouteMetricsDto(StrictModel):
     hop_count: int = Field(ge=0)
     total_distance_km: float = Field(ge=0.0)
-    objective_value: float
 
 
 class RouteDto(StrictModel):
@@ -132,6 +150,7 @@ class RouteDto(StrictModel):
     node_ids: list[str]
     segments: list[RouteSegmentDto]
     metrics: RouteMetricsDto
+    quality: RouteQualityDto
 
     @model_validator(mode="after")
     def validate_route(self) -> "RouteDto":
@@ -226,7 +245,7 @@ class RouteFailureDeltaDto(StrictModel):
     after: RouteDto | None
     route_lost: bool
     path_changed: bool
-    objective_increase: float | None
+    quality_change: Literal["better", "equal", "worse", "incomparable"] | None
 
     @model_validator(mode="after")
     def validate_delta(self) -> "RouteFailureDeltaDto":
@@ -235,22 +254,14 @@ class RouteFailureDeltaDto(StrictModel):
             raise ValueError("route_lost is inconsistent with before/after")
         if self.before is None or self.after is None:
             expected_changed = self.before != self.after
-            expected_increase = None
+            if self.quality_change is not None:
+                raise ValueError("quality_change requires both routes")
         else:
             expected_changed = self.before.node_ids != self.after.node_ids
-            expected_increase = self.after.metrics.objective_value - self.before.metrics.objective_value
+            if self.quality_change is None:
+                raise ValueError("quality_change is required when both routes exist")
         if self.path_changed != expected_changed:
             raise ValueError("path_changed is inconsistent with before/after")
-        if expected_increase is None:
-            if self.objective_increase is not None:
-                raise ValueError("objective_increase requires both routes")
-        elif self.objective_increase is None or not math.isclose(
-            self.objective_increase,
-            expected_increase,
-            rel_tol=1e-12,
-            abs_tol=1e-9,
-        ):
-            raise ValueError("objective_increase is inconsistent with before/after")
         return self
 
 
@@ -334,7 +345,7 @@ class NetworkSummaryDto(StrictModel):
 
 
 class StaticAnalysisDto(StrictModel):
-    schema_version: Literal["static-analysis-1.0"] = "static-analysis-1.0"
+    schema_version: Literal["static-analysis-2.0"] = "static-analysis-2.0"
     summary: NetworkSummaryDto
     clients: list[ClientSnapshotAnalysisDto]
     satellite_failure_impacts: list[SatelliteFailureImpactDto]

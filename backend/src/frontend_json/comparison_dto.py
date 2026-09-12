@@ -62,6 +62,13 @@ class VariantOutcomeDto(StrictModel):
         return self
 
 
+class QualityDimensionComparisonDto(StrictModel):
+    name: str
+    direction: Literal["maximize", "minimize"]
+    presence: Literal["common", "baseline_only", "variant_only"]
+    mean_value: MetricDeltaDto
+
+
 class RouteStrategyComparisonDto(StrictModel):
     strategy_id: str
     presence: Literal["common", "baseline_only", "variant_only"]
@@ -69,7 +76,7 @@ class RouteStrategyComparisonDto(StrictModel):
     switch_count: MetricDeltaDto
     mean_hop_count: MetricDeltaDto
     mean_total_distance_km: MetricDeltaDto
-    mean_objective_value: MetricDeltaDto
+    quality_dimensions: list[QualityDimensionComparisonDto]
     path_difference_samples: int | None = Field(default=None, ge=0)
     path_difference_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
 
@@ -169,7 +176,7 @@ class BaselineVariantComparisonDto(StrictModel):
 
 
 class VariantComparisonReportDto(StrictModel):
-    schema_version: Literal["variant-comparison-1.0"] = "variant-comparison-1.0"
+    schema_version: Literal["variant-comparison-2.0"] = "variant-comparison-2.0"
     baseline_variant_id: str
     outcomes: list[VariantOutcomeDto]
     comparisons: list[BaselineVariantComparisonDto]

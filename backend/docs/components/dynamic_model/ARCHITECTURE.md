@@ -90,7 +90,7 @@ aggregates time spent in each of the four required reasons:
 
 Every configured static route strategy is tracked independently. The temporal result
 contains the route at every sample, contiguous route episodes, direct route-switch
-events and numeric summaries for hop count, distance and objective value.
+events, numeric summaries for hop count/distance, and per-dimension summaries of structured route quality.
 
 The default `NodePathRouteIdentity` defines a logical route by its ordered node IDs.
 Continuous changes in geometric link length therefore do not create fake route
@@ -130,7 +130,7 @@ and a fresh counterfactual outage analysis. The result includes:
 - geometric-visibility loss time;
 - integrated visible-satellite, usable-ingress and reachable-gateway losses;
 - integrated satellite-connectivity loss;
-- route loss/change duration and route-objective degradation for every strategy;
+- route loss/change duration and ordered route-quality changes for every strategy;
 - baseline versus counterfactual route-switch counts reconstructed from the full route timeline.
 
 The raw vector is preserved. Ranking is a separate `DynamicCriticalityRankingPolicy`.
@@ -153,7 +153,7 @@ owned by `spatial3d`.
 
 ## JSON boundaries
 
-`frontend_json` exports a `dynamic-analysis-1.0` UI projection containing the complete
+`frontend_json` exports a `dynamic-analysis-2.0` UI projection containing the complete
 client time series, temporal aggregates and satellite criticality results. It does not
 implement transport.
 

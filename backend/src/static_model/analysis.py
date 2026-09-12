@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import math
 
 from .types import LinkKind
 
@@ -11,6 +12,125 @@ class NoRouteReason(StrEnum):
     ISL_DISCONNECTED = "isl_disconnected"
     NO_GATEWAY_CONTACT = "no_gateway_contact"
     GATEWAY_UNAVAILABLE = "gateway_unavailable"
+
+
+class QualityDirection(StrEnum):
+    MAXIMIZE = "maximize"
+    MINIMIZE = "minimize"
+
+
+class PreferenceRelation(StrEnum):
+    BETTER = "better"
+    EQUAL = "equal"
+    WORSE = "worse"
+    INCOMPARABLE = "incomparable"
+
+
+@dataclass(frozen=True, slots=True)
+class QualityDimension:
+    """One coordinate of a route-quality product lattice.
+
+    The partial order is the desirability order: ``x <= y`` means that ``y``
+    is at least as preferable as ``x`` for this coordinate.
+    """
+
+    name: str
+    value: float
+    direction: QualityDirection
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("quality dimension name must not be blank")
+        if not math.isfinite(self.value):
+            raise ValueError("quality dimension value must be finite")
+
+    def less_or_equal(self, other: "QualityDimension") -> bool:
+        self._require_compatible(other)
+        if self.direction == QualityDirection.MAXIMIZE:
+            return self.value <= other.value
+        return self.value >= other.value
+
+    def meet(self, other: "QualityDimension") -> "QualityDimension":
+        self._require_compatible(other)
+        if self.direction == QualityDirection.MAXIMIZE:
+            value = min(self.value, other.value)
+        else:
+            value = max(self.value, other.value)
+        return QualityDimension(self.name, value, self.direction)
+
+    def join(self, other: "QualityDimension") -> "QualityDimension":
+        self._require_compatible(other)
+        if self.direction == QualityDirection.MAXIMIZE:
+            value = max(self.value, other.value)
+        else:
+            value = min(self.value, other.value)
+        return QualityDimension(self.name, value, self.direction)
+
+    def _require_compatible(self, other: "QualityDimension") -> None:
+        if self.name != other.name or self.direction != other.direction:
+            raise ValueError("quality dimensions must have the same name and direction")
+
+
+@dataclass(frozen=True, slots=True)
+class RouteQuality:
+    """Structured route quality with finite-dimensional product-lattice semantics.
+
+    The lattice order is Pareto/component-wise.  Strategies may additionally
+    impose a total extension (for example lexicographic priority) when they
+    must select one route from an antichain of incomparable qualities.
+    """
+
+    dimensions: tuple[QualityDimension, ...]
+
+    def __post_init__(self) -> None:
+        names = tuple(item.name for item in self.dimensions)
+        if not names or any(not name.strip() for name in names):
+            raise ValueError("route quality requires non-empty named dimensions")
+        if len(names) != len(set(names)):
+            raise ValueError("route quality dimension names must be unique")
+
+    def less_or_equal(self, other: "RouteQuality") -> bool:
+        self._require_compatible(other)
+        return all(left.less_or_equal(right) for left, right in zip(self.dimensions, other.dimensions, strict=True))
+
+    def relation_to(self, other: "RouteQuality") -> PreferenceRelation:
+        """Compare ``self`` with ``other`` in the product/Pareto order."""
+
+        self_le_other = self.less_or_equal(other)
+        other_le_self = other.less_or_equal(self)
+        if self_le_other and other_le_self:
+            return PreferenceRelation.EQUAL
+        if other_le_self:
+            return PreferenceRelation.BETTER
+        if self_le_other:
+            return PreferenceRelation.WORSE
+        return PreferenceRelation.INCOMPARABLE
+
+    def meet(self, other: "RouteQuality") -> "RouteQuality":
+        self._require_compatible(other)
+        return RouteQuality(tuple(
+            left.meet(right)
+            for left, right in zip(self.dimensions, other.dimensions, strict=True)
+        ))
+
+    def join(self, other: "RouteQuality") -> "RouteQuality":
+        self._require_compatible(other)
+        return RouteQuality(tuple(
+            left.join(right)
+            for left, right in zip(self.dimensions, other.dimensions, strict=True)
+        ))
+
+    def value(self, name: str) -> float:
+        for dimension in self.dimensions:
+            if dimension.name == name:
+                return dimension.value
+        raise KeyError(name)
+
+    def _require_compatible(self, other: "RouteQuality") -> None:
+        left = tuple((item.name, item.direction) for item in self.dimensions)
+        right = tuple((item.name, item.direction) for item in other.dimensions)
+        if left != right:
+            raise ValueError("route qualities must use the same ordered dimension schema")
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +163,6 @@ class RouteSegment:
 class RouteMetrics:
     hop_count: int
     total_distance_km: float
-    objective_value: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +173,7 @@ class Route:
     node_ids: tuple[str, ...]
     segments: tuple[RouteSegment, ...]
     metrics: RouteMetrics
+    quality: RouteQuality
 
     @property
     def nodes(self) -> tuple[str, ...]:
@@ -101,6 +221,7 @@ class RouteFailureDelta:
     strategy_id: str
     before: Route | None
     after: Route | None
+    quality_change: PreferenceRelation | None
 
     @property
     def route_lost(self) -> bool:
@@ -111,12 +232,6 @@ class RouteFailureDelta:
         if self.before is None or self.after is None:
             return self.before != self.after
         return self.before.node_ids != self.after.node_ids
-
-    @property
-    def objective_increase(self) -> float | None:
-        if self.before is None or self.after is None:
-            return None
-        return self.after.metrics.objective_value - self.before.metrics.objective_value
 
 
 @dataclass(frozen=True, slots=True)

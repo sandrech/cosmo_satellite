@@ -7,6 +7,7 @@ from variant_comparison import (
     MetricDelta,
     NetworkComparison,
     ParameterChange,
+    QualityDimensionComparison,
     RouteStrategyComparison,
     SatelliteCriticalityComparison,
     VariantComparisonReport,
@@ -21,6 +22,7 @@ from .comparison_dto import (
     NetworkComparisonDto,
     NoRouteReasonComparisonDto,
     ParameterChangeDto,
+    QualityDimensionComparisonDto,
     RouteStrategyComparisonDto,
     SatelliteCriticalityComparisonDto,
     VariantComparisonReportDto,
@@ -74,7 +76,15 @@ def _route(value: RouteStrategyComparison) -> RouteStrategyComparisonDto:
         switch_count=_metric(value.switch_count),
         mean_hop_count=_metric(value.mean_hop_count),
         mean_total_distance_km=_metric(value.mean_total_distance_km),
-        mean_objective_value=_metric(value.mean_objective_value),
+        quality_dimensions=[
+            QualityDimensionComparisonDto(
+                name=item.name,
+                direction=item.direction,
+                presence=item.presence.value,
+                mean_value=_metric(item.mean_value),
+            )
+            for item in value.quality_dimensions
+        ],
         path_difference_samples=value.path_difference_samples,
         path_difference_fraction=value.path_difference_fraction,
     )

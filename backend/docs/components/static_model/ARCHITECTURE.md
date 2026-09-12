@@ -92,7 +92,8 @@ The classifier is itself replaceable through `NoRouteReasonPolicy`.
 
 ## Routing
 
-A route is a rich domain value:
+A route no longer assumes that every strategy can be reduced to one scalar objective.  Universal
+route measurements and strategy-specific quality are separate:
 
 ```text
 Route
@@ -100,19 +101,48 @@ Route
     +-- source_id / target_id
     +-- node_ids
     +-- RouteSegment[]
-    |      +-- kind
-    |      +-- distance_km
-    |      `-- elevation_deg (ground links when known)
-    `-- RouteMetrics
-           +-- hop_count
-           +-- total_distance_km
-           `-- objective_value
+    +-- RouteMetrics
+    |      +-- hop_count
+    |      `-- total_distance_km
+    `-- RouteQuality
+           `-- QualityDimension[]
+                  +-- name
+                  +-- value
+                  `-- direction = maximize | minimize
 ```
 
-`StaticAnalysisPlan.route_strategies` controls which routes are calculated. The reference plan
-contains `minimum_hops` and `minimum_distance`, with `minimum_hops` selected as the primary
-route used by the mandatory result export. A caller may replace the list with another
-`RouteCostPolicy` without changing `StaticModel`.
+`RouteQuality` is a finite-dimensional product lattice.  Its intrinsic order is Pareto/component-wise and may
+therefore report two qualities as incomparable.  A concrete `RoutingStrategy` supplies the total
+selection rule it needs; the built-in strategies use a lexicographic total extension.  This keeps
+"quality" structured and explainable instead of hiding unrelated criteria inside a weighted float.
+
+The default reference plan still contains `minimum_hops` and `minimum_distance`, with
+`minimum_hops` selected as the primary route used by the mandatory result export.  These are
+implemented by `ShortestPathRouting`, which may still use an additive edge-cost algorithm
+internally, but that implementation detail is no longer the contract of every routing strategy.
+
+`ResilientThenDistanceRouting` is an additional strategy.  For every satellite `s` it calculates
+the best minimum-distance failover route after removing `s`.  For a candidate primary path `P` it
+then evaluates:
+
+```text
+survive(P) = min over satellites s in P of [a failover route exists after removing s]
+backup(P)  = max over satellites s in P of best_failover_distance_after_removing_s
+```
+
+and selects lexicographically:
+
+1. maximize `survive(P)`;
+2. minimize `backup(P)`;
+3. minimize primary `total_distance_km`;
+4. minimize `hop_count`;
+5. deterministic target/path tie-break.
+
+The minimax part is solved exactly by thresholding satellite admissibility: find the smallest
+worst-case failover-distance threshold that still permits a robust source-to-gateway path, then
+run minimum-distance routing in that admissible subgraph.  No weighted scalar score is used.
+`StaticAnalysisPlan.reference_case_with_resilient_routing()` enables this strategy and makes it
+primary; the ordinary reference plan is unchanged.
 
 ## Resilience and failure impact
 
@@ -129,7 +159,7 @@ satellite the model returns a `SatelliteFailureImpact` with per-client deltas:
 - number of valid ingress satellites lost;
 - number of reachable gateways lost;
 - satellite-connectivity loss;
-- per-route-strategy route loss/change/objective degradation.
+- per-route-strategy route loss/change and ordered-quality change.
 
 The reference `LexicographicCriticalityRanking` sorts these raw impacts with service loss first,
 then coverage, ingress, gateway diversity, connectivity and route degradation. Ranking is a

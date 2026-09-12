@@ -80,6 +80,14 @@ class VariantOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class QualityDimensionComparison:
+    name: str
+    direction: str
+    presence: Presence
+    mean_value: MetricDelta
+
+
+@dataclass(frozen=True, slots=True)
 class RouteStrategyComparison:
     strategy_id: str
     presence: Presence
@@ -87,7 +95,7 @@ class RouteStrategyComparison:
     switch_count: MetricDelta
     mean_hop_count: MetricDelta
     mean_total_distance_km: MetricDelta
-    mean_objective_value: MetricDelta
+    quality_dimensions: tuple[QualityDimensionComparison, ...]
     path_difference_samples: int | None
     path_difference_fraction: float | None
 

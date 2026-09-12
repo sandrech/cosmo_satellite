@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
-
 from .analysis import (
     ClientFailureImpact,
     ClientSnapshotAnalysis,
@@ -13,6 +11,8 @@ from .analysis import (
     Route,
     RouteFailureDelta,
     RouteMetrics,
+    PreferenceRelation,
+    RouteQuality,
     RouteSegment,
     RoutingState,
     SatelliteFailureImpact,
@@ -25,10 +25,11 @@ from .contracts import (
     GraphAlgorithms,
     NoRouteReasonPolicy,
     ReachabilityPolicy,
+    RoutingStrategy,
     TraversalRole,
 )
 from .networkx_engine import NetworkXGraphAlgorithms
-from .plan import RouteStrategy, StaticAnalysisPlan
+from .plan import StaticAnalysisPlan
 from .policies import (
     AvailableSatelliteFailureDomain,
     CaseNoRouteReason,
@@ -183,15 +184,19 @@ class StaticModel:
                 f"{target_id!r} is not an available target for source {source_id!r}",
                 ("target_id",),
             ),))
-        path = self.components.graph_algorithms.shortest_path(
+        selected = strategy.select_path(
             self.network,
             source_id,
-            target_id,
+            (target_id,),
             self.components.reachability,
-            strategy.cost,
+            self.components.graph_algorithms,
+            self.components.failure_domain,
             excluded_nodes,
         )
-        return Ok(None if path is None else self._route_from_nodes(path, strategy))
+        if selected is None:
+            return Ok(None)
+        path, quality = selected
+        return Ok(self._route_from_nodes(path, strategy.id, quality))
 
     def select_route(
         self,
@@ -352,8 +357,8 @@ class StaticModel:
                     else max(0, before_kappa - after_kappa)
                 )
                 route_deltas = tuple(
-                    RouteFailureDelta(
-                        strategy.id,
+                    self._route_failure_delta(
+                        strategy,
                         before.routing.for_strategy(strategy.id),
                         after.routing.for_strategy(strategy.id),
                     )
@@ -388,7 +393,7 @@ class StaticModel:
     def _select_route(
         self,
         source_id: str,
-        strategy: RouteStrategy,
+        strategy: RoutingStrategy,
         excluded_nodes: frozenset[str],
     ) -> Route | None:
         targets = self.components.graph_algorithms.reachable_targets(
@@ -397,42 +402,27 @@ class StaticModel:
             self.components.reachability,
             excluded_nodes,
         )
-        routes: list[Route] = []
-        for target_id in targets:
-            path = self.components.graph_algorithms.shortest_path(
-                self.network,
-                source_id,
-                target_id,
-                self.components.reachability,
-                strategy.cost,
-                excluded_nodes,
-            )
-            if path is not None:
-                routes.append(self._route_from_nodes(path, strategy))
-        if not routes:
-            return None
-        return min(
-            routes,
-            key=lambda route: (
-                route.metrics.objective_value,
-                route.metrics.hop_count,
-                route.target_id,
-                route.node_ids,
-            ),
+        selected = strategy.select_path(
+            self.network,
+            source_id,
+            targets,
+            self.components.reachability,
+            self.components.graph_algorithms,
+            self.components.failure_domain,
+            excluded_nodes,
         )
+        if selected is None:
+            return None
+        path, quality = selected
+        return self._route_from_nodes(path, strategy.id, quality)
 
-    def _route_from_nodes(self, path: tuple[str, ...], strategy: RouteStrategy) -> Route:
+    def _route_from_nodes(self, path: tuple[str, ...], strategy_id: str, quality: RouteQuality) -> Route:
         links = {frozenset((link.a, link.b)): link for link in self.network.links}
         segments: list[RouteSegment] = []
         distance = 0.0
-        objective = 0.0
         for left, right in zip(path, path[1:]):
             link = links[frozenset((left, right))]
-            cost = float(strategy.cost.cost(link))
-            if not math.isfinite(cost) or cost < 0:
-                raise ValueError(f"route strategy {strategy.id!r} produced invalid edge cost")
             distance += link.distance_km
-            objective += cost
             segments.append(RouteSegment(
                 from_id=left,
                 to_id=right,
@@ -441,15 +431,23 @@ class StaticModel:
                 elevation_deg=link.elevation_deg,
             ))
         return Route(
-            strategy_id=strategy.id,
+            strategy_id=strategy_id,
             source_id=path[0],
             target_id=path[-1],
             node_ids=path,
             segments=tuple(segments),
-            metrics=RouteMetrics(max(0, len(path) - 1), distance, objective),
+            metrics=RouteMetrics(max(0, len(path) - 1), distance),
+            quality=quality,
         )
 
-    def _strategy(self, strategy_id: str) -> RouteStrategy | None:
+    @staticmethod
+    def _route_failure_delta(strategy: RoutingStrategy, before: Route | None, after: Route | None) -> RouteFailureDelta:
+        quality_change: PreferenceRelation | None = None
+        if before is not None and after is not None:
+            quality_change = strategy.compare_quality(after.quality, before.quality)
+        return RouteFailureDelta(strategy.id, before, after, quality_change)
+
+    def _strategy(self, strategy_id: str) -> RoutingStrategy | None:
         return next((strategy for strategy in self.plan.route_strategies if strategy.id == strategy_id), None)
 
     def _validate_source(self, source_id: str) -> Result[None, StaticProblems]:

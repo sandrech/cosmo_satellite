@@ -24,11 +24,15 @@ from static_model import (
     LinkKind,
     NetworkSummary,
     NoRouteReason,
+    PreferenceRelation,
+    QualityDimension,
+    QualityDirection,
     RankedSatelliteImpact,
     ResilienceState,
     Route,
     RouteFailureDelta,
     RouteMetrics,
+    RouteQuality,
     RouteSegment,
     RoutingState,
     SatelliteConnectivity,
@@ -48,6 +52,8 @@ from .dto import (
     NetworkSummaryDto,
     RankedSatelliteImpactDto,
     ResilienceStateDto,
+    QualityDimensionDto,
+    RouteQualityDto,
     RouteDto,
     RouteFailureDeltaDto,
     RouteMetricsDto,
@@ -216,8 +222,15 @@ def _route_to_dto(route: Route) -> RouteDto:
         metrics=RouteMetricsDto(
             hop_count=route.metrics.hop_count,
             total_distance_km=route.metrics.total_distance_km,
-            objective_value=route.metrics.objective_value,
         ),
+        quality=RouteQualityDto(dimensions=[
+            QualityDimensionDto(
+                name=item.name,
+                value=item.value,
+                direction=item.direction.value,
+            )
+            for item in route.quality.dimensions
+        ]),
     )
 
 
@@ -240,8 +253,15 @@ def _route_from_dto(dto: RouteDto) -> Route:
         metrics=RouteMetrics(
             hop_count=dto.metrics.hop_count,
             total_distance_km=dto.metrics.total_distance_km,
-            objective_value=dto.metrics.objective_value,
         ),
+        quality=RouteQuality(tuple(
+            QualityDimension(
+                item.name,
+                item.value,
+                QualityDirection(item.direction),
+            )
+            for item in dto.quality.dimensions
+        )),
     )
 
 
@@ -318,7 +338,7 @@ def _delta_to_dto(value: RouteFailureDelta) -> RouteFailureDeltaDto:
         after=None if value.after is None else _route_to_dto(value.after),
         route_lost=value.route_lost,
         path_changed=value.path_changed,
-        objective_increase=value.objective_increase,
+        quality_change=None if value.quality_change is None else value.quality_change.value,
     )
 
 
@@ -327,6 +347,7 @@ def _delta_from_dto(value: RouteFailureDeltaDto) -> RouteFailureDelta:
         strategy_id=value.strategy_id,
         before=None if value.before is None else _route_from_dto(value.before),
         after=None if value.after is None else _route_from_dto(value.after),
+        quality_change=None if value.quality_change is None else PreferenceRelation(value.quality_change),
     )
 
 
