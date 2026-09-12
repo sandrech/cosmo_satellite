@@ -1,10 +1,19 @@
-import type { ScenarioDraft, SimulationFrame } from "../model/types";
+import type {
+  ModelRunData,
+  ModelSummary,
+  RoutingStrategyId,
+  ScenarioDraft,
+  SimulationFrame,
+} from "../model/types";
+import type { FrontendWorkspaceStateDto } from "./frontendJsonAdapter";
 import {
-  adaptFrontendFrameBundle,
-  isFrontendFrameBundle,
-  type FrontendWorkspaceStateDto,
-} from "./frontendJsonAdapter";
+  isModelRunResponse,
+  toModelRunData,
+} from "./modelRunAdapter";
+import { scenarioFromJson, scenarioToJson } from "./scenarios";
 
+
+// Kept for the isolated legacy mock module/tests. The production store uses ModelApiClient.
 export interface FrameRequest {
   scenario: ScenarioDraft;
   tS: number;
@@ -20,64 +29,72 @@ export type WorkspaceSaveResult = {
   filename?: string;
 };
 
-function isSimulationFrame(value: unknown): value is SimulationFrame {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<SimulationFrame>;
-  return (
-    Array.isArray(candidate.satellites) &&
-    Array.isArray(candidate.groundSites) &&
-    Array.isArray(candidate.links) &&
-    typeof candidate.tS === "number"
-  );
+async function jsonOrThrow(response: Response) {
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      detail = String(body?.detail ?? body?.message ?? detail);
+    } catch {
+      // keep HTTP status
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<unknown>;
 }
 
-export class HttpSimulationGateway implements SimulationGateway {
+export class ModelApiClient {
   constructor(private readonly baseUrl = "/api") {}
 
-  async getFrame(request: FrameRequest): Promise<SimulationFrame> {
-    const query = new URLSearchParams({
-      t_s: String(request.tS),
-      client_id: request.clientId,
-      scenario_id: request.scenario.id,
-    });
-    const response = await fetch(
-      `${this.baseUrl}/runs/current/frame?${query.toString()}`,
-      { headers: { Accept: "application/json" } },
+  async listModels(): Promise<ModelSummary[]> {
+    const payload = await jsonOrThrow(
+      await fetch(`${this.baseUrl}/models`, {
+        headers: { Accept: "application/json" },
+      }),
     );
-    if (!response.ok) {
-      throw new Error(`Backend returned HTTP ${response.status}`);
-    }
-
-    const payload: unknown = await response.json();
-    if (isFrontendFrameBundle(payload)) {
-      return adaptFrontendFrameBundle(payload, request);
-    }
-    if (isSimulationFrame(payload)) {
-      return { ...payload, source: "backend" };
-    }
-    throw new Error("Backend frame has an unsupported JSON contract");
+    if (!Array.isArray(payload)) throw new Error("Некорректный список моделей от backend");
+    return payload.map((item: any) => ({
+      id: String(item.id),
+      title: String(item.title ?? item.id),
+      filename: String(item.filename ?? `${item.id}.json`),
+    }));
   }
-}
 
-export class FallbackSimulationGateway implements SimulationGateway {
-  private backendAvailable: boolean | null = null;
+  async getModel(id: string): Promise<ScenarioDraft> {
+    const payload = await jsonOrThrow(
+      await fetch(`${this.baseUrl}/models/${encodeURIComponent(id)}`, {
+        headers: { Accept: "application/json" },
+      }),
+    );
+    return scenarioFromJson(payload);
+  }
 
-  constructor(
-    private readonly backend: SimulationGateway,
-    private readonly fallback: SimulationGateway,
-  ) {}
+  /**
+   * Calculate the complete official time grid in one backend call.
+   * Timeline scrubbing afterwards is local and causes no per-frame HTTP roundtrip.
+   */
+  async runModel(
+    scenario: ScenarioDraft,
+    primaryRoutingStrategyId: RoutingStrategyId,
+  ): Promise<ModelRunData> {
+    const payload = await jsonOrThrow(
+      await fetch(`${this.baseUrl}/model/run`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          scenario: scenarioToJson(scenario),
+          primary_route_strategy_id: primaryRoutingStrategyId,
+        }),
+      }),
+    );
 
-  async getFrame(request: FrameRequest): Promise<SimulationFrame> {
-    if (this.backendAvailable !== false) {
-      try {
-        const frame = await this.backend.getFrame(request);
-        this.backendAvailable = true;
-        return frame;
-      } catch {
-        this.backendAvailable = false;
-      }
+    if (!isModelRunResponse(payload)) {
+      throw new Error("Backend вернул неподдерживаемый контракт полного расчёта");
     }
-    return this.fallback.getFrame(request);
+    return toModelRunData(payload);
   }
 }
 
@@ -95,11 +112,6 @@ function downloadJson(filename: string, payload: unknown) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/**
- * Save through the backend JSON transport when that endpoint is available.
- * Until the HTTP backend is wired, the exact same versioned DTO is downloaded
- * locally, so the Save button remains fully functional in mock/offline mode.
- */
 export async function saveFrontendWorkspaceState(
   payload: FrontendWorkspaceStateDto,
   baseUrl = "/api",
@@ -113,13 +125,9 @@ export async function saveFrontendWorkspaceState(
       },
       body: JSON.stringify(payload),
     });
-
-    if (response.ok) {
-      return { storage: "backend" };
-    }
+    if (response.ok) return { storage: "backend" };
   } catch {
-    // The backend HTTP layer is optional in the current branch. Fall through
-    // to a local JSON save using the same frontend_json contract.
+    // Offline/local development fallback: preserve the same JSON envelope.
   }
 
   const safeScenario = payload.scenario.id.replace(/[^a-zA-Z0-9._-]+/g, "-");

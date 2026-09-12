@@ -204,6 +204,8 @@ class MockSimulationGateway implements SimulationGateway {
       groundSites: GROUND_SITES,
       links: network.links,
       route: network.route,
+      routeDetails: null,
+      routesByStrategy: {},
       orbits: buildOrbits(request),
       metrics: [
         { clientId: "C65", visibility: 99.1, availability: 92.4, maxOutageMinutes: 16, outages: 4 },

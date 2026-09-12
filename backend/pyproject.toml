@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.11,<3",
   "networkx>=3.5,<4",
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.32,<1",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +25,9 @@ dev = [
   "pytest>=8.3",
   "numpy>=2,<3",
 ]
+
+[project.scripts]
+cosmo-api = "api_service.app:main"
 
 [tool.pytest.ini_options]
 addopts = "-q"
