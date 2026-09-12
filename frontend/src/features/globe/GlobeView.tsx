@@ -8,14 +8,22 @@ import { GlobeMap2D } from "./GlobeMap2D";
 export function GlobeView() {
   const { frame, loading, error, viewMode, earthStyle } = useAppState();
 
-  if (error) return <ErrorState message={error} />;
-  if (!frame) return <LoadingState label="Формируем демонстрационный кадр…" />;
+  if (error && !frame) return <ErrorState message={error} />;
+  if (!frame && loading) return <LoadingState label="Формируем первый кадр…" />;
+  if (!frame) {
+    return (
+      <div className="state-message">
+        <strong>Кадр ещё не рассчитан</strong>
+        <span>Вернитесь в «Проект» и запустите расчёт модели.</span>
+      </div>
+    );
+  }
 
   return (
     <div
       className={`globe-view reference-viewport is-${viewMode} is-${earthStyle}`}
     >
-      {loading ? <div className="frame-loading">Обновление кадра…</div> : null}
+      {loading ? <div className="frame-loading">Считаем полную временную сетку…</div> : null}
 
       {earthStyle === "imagery" ? (
         <GlobeCesiumTexture />

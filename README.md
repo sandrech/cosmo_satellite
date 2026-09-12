@@ -17,6 +17,8 @@
 Требуются Python 3.12+ и Node.js. Один раз установите зависимости:
 
 ```bash
+python3 -m venv .venv
+. ./.venv/bin/activate
 python3 -m pip install -e ./backend
 cd frontend && npm install && cd ..
 ```

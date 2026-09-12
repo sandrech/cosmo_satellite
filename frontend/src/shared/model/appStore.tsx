@@ -95,6 +95,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [page, setPage] = useState<PageId>("project");
   const [scenario, setScenarioState] = useState<ScenarioDraft>(DEFAULT_SCENARIO);
   const [modelRun, setModelRun] = useState<ModelRunData | null>(null);
+  const [snapshotFrame, setSnapshotFrame] = useState<SimulationFrame | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +120,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const setScenario = useCallback((next: ScenarioDraft) => {
     setScenarioState(next);
+    setModelRun(null);
+    setSnapshotFrame(null);
     setDirty(true);
     const clients = next.groundSites.filter((site) => site.role === "client");
     if (!clients.some((site) => site.id === clientId)) {
@@ -135,8 +138,23 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     setError(null);
     try {
       const validatedScenario = validateScenarioDraft(nextScenario);
-      const run = await api.runModel(validatedScenario, nextRoutingStrategy);
+      const previewClientId = firstClientId(validatedScenario);
+
+      // A full-day dynamic run is intentionally expensive. Render one exact
+      // backend snapshot first so the UI never sits on a blocking spinner.
+      const preview = await api.getSnapshot(
+        validatedScenario,
+        0,
+        previewClientId,
+        nextRoutingStrategy,
+      );
       setScenarioState(validatedScenario);
+      setClientId(previewClientId);
+      setTSState(0);
+      setSnapshotFrame(preview);
+      setModelRun(null);
+
+      const run = await api.runModel(validatedScenario, nextRoutingStrategy);
       setModelRun(run);
       setRoutingStrategies(run.routingStrategies.length ? run.routingStrategies : DEFAULT_ROUTING_STRATEGIES);
       setDirty(false);
@@ -162,13 +180,20 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     setPlaying(false);
     try {
       const nextScenario = await api.getModel(id);
+      const nextClientId = firstClientId(nextScenario);
+      const preview = await api.getSnapshot(
+        nextScenario,
+        0,
+        nextClientId,
+        routingStrategyId,
+      );
       setScenarioState(nextScenario);
       setTSState(0);
-      setClientId(firstClientId(nextScenario));
+      setClientId(nextClientId);
       setSelectedId(null);
-      const run = await api.runModel(nextScenario, routingStrategyId);
-      setModelRun(run);
-      setRoutingStrategies(run.routingStrategies.length ? run.routingStrategies : DEFAULT_ROUTING_STRATEGIES);
+      setSnapshotFrame(preview);
+      setModelRun(null);
+      setRoutingStrategies(DEFAULT_ROUTING_STRATEGIES);
       setDirty(false);
     } catch (reason: unknown) {
       const message = reason instanceof Error ? reason.message : "Не удалось загрузить модель";
@@ -189,12 +214,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         const preferred = models.find((item) => item.id === DEFAULT_SCENARIO.id) ?? models[0];
         const nextScenario = preferred ? await api.getModel(preferred.id) : DEFAULT_SCENARIO;
         if (!active) return;
-        setScenarioState(nextScenario);
-        setClientId(firstClientId(nextScenario));
-        const run = await api.runModel(nextScenario, "minimum_hops");
+        const nextClientId = firstClientId(nextScenario);
+        const preview = await api.getSnapshot(nextScenario, 0, nextClientId, "minimum_hops");
         if (!active) return;
-        setModelRun(run);
-        setRoutingStrategies(run.routingStrategies.length ? run.routingStrategies : DEFAULT_ROUTING_STRATEGIES);
+        setScenarioState(nextScenario);
+        setClientId(nextClientId);
+        setTSState(0);
+        setSnapshotFrame(preview);
+        setModelRun(null);
+        setRoutingStrategies(DEFAULT_ROUTING_STRATEGIES);
         setDirty(false);
         setError(null);
       } catch (reason: unknown) {
@@ -231,8 +259,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const frame = useMemo(
     () => modelRun
       ? frameFromModelRun(modelRun, tS, clientId, routingStrategyId)
-      : null,
-    [modelRun, tS, clientId, routingStrategyId],
+      : snapshotFrame,
+    [modelRun, snapshotFrame, tS, clientId, routingStrategyId],
   );
 
   const value = useMemo<AppState>(() => ({

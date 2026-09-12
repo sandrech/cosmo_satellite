@@ -5,7 +5,7 @@ import { PlaybackControls } from "./PlaybackControls";
 const SPEEDS = ["1×", "5×", "20×", "60×"];
 
 export function Timeline() {
-  const { tS, setTS, scenario } = useAppState();
+  const { modelRun, tS, setTS, scenario } = useAppState();
   const [speed, setSpeed] = useState("1×");
 
   return (
@@ -20,6 +20,7 @@ export function Timeline() {
           max={scenario.horizonS - scenario.stepS}
           step={scenario.stepS}
           value={tS}
+          disabled={!modelRun}
           onChange={(event) => setTS(Number(event.target.value))}
           aria-label="Момент расчёта"
         />

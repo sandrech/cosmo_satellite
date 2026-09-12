@@ -29,12 +29,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-health_ok() {
+backend_alive() {
   curl --silent --fail --max-time 1 "$BACKEND_URL/api/health" >/dev/null 2>&1
+}
+
+health_ok() {
+  curl --silent --fail --max-time 1 "$BACKEND_URL/api/health" 2>/dev/null |
+    "$PYTHON_BIN" -c 'import json, sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("status") == "ok" and isinstance(data.get("routing_strategies"), list) else 1)' \
+      >/dev/null 2>&1
 }
 
 if health_ok; then
   echo "[cosmo] Backend уже работает: $BACKEND_URL"
+elif backend_alive; then
+  cat >&2 <<EOF2
+[cosmo] На $BACKEND_URL уже запущен несовместимый старый backend.
+[cosmo] Останови старый процесс/предыдущий ./scripts/run_dev.sh и запусти команду снова.
+EOF2
+  exit 1
 else
   if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import sys
@@ -58,7 +70,7 @@ EOF2
   : > "$BACKEND_LOG"
   (
     cd "$ROOT/backend"
-    exec env PYTHONUNBUFFERED=1 PYTHONPATH=src "$PYTHON_BIN" -m backend_api.server \
+    exec env PYTHONUNBUFFERED=1 PYTHONPATH=src "$PYTHON_BIN" -m api_service.app \
       --host "$BACKEND_HOST" --port "$BACKEND_PORT"
   ) >"$BACKEND_LOG" 2>&1 &
   BACKEND_PID=$!

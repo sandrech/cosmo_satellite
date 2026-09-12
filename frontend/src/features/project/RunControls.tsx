@@ -5,6 +5,7 @@ export function RunControls() {
   const {
     dirty,
     loading,
+    modelRun,
     recalculate,
     setPage,
     setPlaying,
@@ -28,9 +29,13 @@ export function RunControls() {
     <div className="run-controls-wrap">
       <div className={`calculation-status ${dirty ? "is-dirty" : "is-ready"}`}>
         <i />
-        {dirty
-          ? "Параметры изменены — требуется пересчитать модель"
-          : "Текущий полный расчёт соответствует параметрам"}
+        {loading
+          ? "Идёт полный расчёт временной сетки — стартовый кадр уже доступен"
+          : dirty
+            ? "Параметры изменены — требуется пересчитать модель"
+            : modelRun
+              ? "Текущий полный расчёт соответствует параметрам"
+              : "Стартовый кадр готов — запустите полный расчёт для timeline и динамической аналитики"}
         {localError ? <strong>{localError}</strong> : null}
       </div>
       <div className="run-controls">

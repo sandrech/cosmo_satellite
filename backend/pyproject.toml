@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cosmo-backend = "backend_api.server:main"
+cosmo-backend = "api_service.app:main"
 cosmo-api = "api_service.app:main"
 
 [project.optional-dependencies]

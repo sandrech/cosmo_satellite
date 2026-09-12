@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hashlib
 import json
@@ -13,10 +14,12 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, ConfigDict
 
+from backend_api.service import ApiError, ApplicationService
+
 from cosmo_a_json import ScenarioDto, adapt_scenario
 from dynamic_model import DynamicModel, Err as DynamicErr, TimeGrid
-from frontend_json import dynamic_analysis_to_dto, sampled_trace_to_dto
-from model_query import SampledTrace, SamplingRange, SnapshotBundle
+from frontend_json import dynamic_analysis_to_dto, sampled_trace_to_dto, snapshot_bundle_to_dto
+from model_query import Err as QueryErr, ModelQuery, SampledTrace, SamplingRange, SnapshotBundle
 from spatial3d import Err as SpatialErr, SpatialModel, project_network, project_scene
 from static_model import (
     LexicographicCriticalityRanking,
@@ -55,6 +58,16 @@ class ModelRunRequest(BaseModel):
     ] = "minimum_hops"
 
 
+class ModelSnapshotRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: dict[str, Any]
+    t_s: float = 0.0
+    primary_route_strategy_id: Literal[
+        "minimum_hops", "minimum_distance", "resilient_distance"
+    ] = "minimum_hops"
+
+
 app = FastAPI(title="COSMO model API", version="1.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 app.add_middleware(
@@ -69,6 +82,7 @@ app.add_middleware(
 # Timeline interaction on the frontend never calls the model again.
 _RUN_CACHE: dict[str, dict[str, Any]] = {}
 _RUN_CACHE_LOCK = Lock()
+_COMPAT_SERVICE = ApplicationService()
 
 
 def _repo_root() -> Path:
@@ -154,6 +168,32 @@ def _static_plan(primary_strategy_id: str) -> StaticAnalysisPlan:
         compute_failure_impacts=True,
         criticality_ranking=LexicographicCriticalityRanking(),
     )
+
+
+def _calculate_snapshot(
+    scenario_json: dict[str, Any],
+    t_s: float,
+    primary_strategy_id: str,
+) -> dict[str, Any]:
+    dto = _decode_scenario(scenario_json)
+    adapted = adapt_scenario(dto)
+
+    spatial_result = SpatialModel.create(adapted.spatial, adapted.trajectory)
+    if isinstance(spatial_result, SpatialErr):
+        raise ValueError(f"SpatialModel: {_error_messages(spatial_result)}")
+
+    query_result = ModelQuery.create(
+        spatial_result.value,
+        static_plan=_static_plan(primary_strategy_id),
+    )
+    if isinstance(query_result, QueryErr):
+        raise ValueError(f"ModelQuery: {_error_messages(query_result)}")
+
+    snapshot_result = query_result.value.snapshot_at(t_s)
+    if isinstance(snapshot_result, QueryErr):
+        raise ValueError(f"Snapshot: {_error_messages(snapshot_result)}")
+
+    return snapshot_bundle_to_dto(snapshot_result.value).model_dump(mode="json")
 
 
 def _cache_key(scenario: dict[str, Any], primary_strategy_id: str) -> str:
@@ -258,6 +298,20 @@ def get_model(model_id: str) -> dict[str, Any]:
     return payload
 
 
+@app.post("/api/model/snapshot")
+async def model_snapshot(request: ModelSnapshotRequest) -> JSONResponse:
+    try:
+        payload = await asyncio.to_thread(
+            _calculate_snapshot,
+            request.scenario,
+            request.t_s,
+            request.primary_route_strategy_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(payload)
+
+
 @app.post("/api/model/run")
 async def run_model(request: ModelRunRequest) -> JSONResponse:
     try:
@@ -271,6 +325,41 @@ async def run_model(request: ModelRunRequest) -> JSONResponse:
     return JSONResponse(payload)
 
 
+def _compat_call(method_name: str, payload: dict[str, Any]) -> JSONResponse:
+    method = getattr(_COMPAT_SERVICE, method_name)
+    try:
+        result = method(payload)
+    except ApiError as exc:
+        return JSONResponse(status_code=exc.status, content=exc.as_json())
+    return JSONResponse(result)
+
+
+@app.post("/api/query/snapshot")
+def query_snapshot(payload: dict[str, Any]) -> JSONResponse:
+    return _compat_call("snapshot", payload)
+
+
+@app.post("/api/query/trace")
+def query_trace(payload: dict[str, Any]) -> JSONResponse:
+    return _compat_call("trace", payload)
+
+
+@app.post("/api/query/dynamic")
+def query_dynamic(payload: dict[str, Any]) -> JSONResponse:
+    return _compat_call("dynamic_analysis", payload)
+
+
+@app.post("/api/query/compare")
+def query_compare(payload: dict[str, Any]) -> JSONResponse:
+    return _compat_call("compare", payload)
+
+
+@app.post("/api/export/result")
+def export_result(payload: dict[str, Any]) -> JSONResponse:
+    return _compat_call("result_export", payload)
+
+
+@app.post("/api/workspace/state")
 @app.post("/api/runs/current/state")
 def save_workspace_state(payload: dict[str, Any]) -> dict[str, str]:
     if payload.get("schema_version") != "frontend-workspace-state-1.0":
@@ -287,7 +376,11 @@ def save_workspace_state(payload: dict[str, Any]) -> dict[str, str]:
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("api_service.app:app", host="127.0.0.1", port=8000, reload=False)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run("api_service.app:app", host=args.host, port=args.port, reload=False)
 
 
 if __name__ == "__main__":

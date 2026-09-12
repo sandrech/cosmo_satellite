@@ -18,7 +18,7 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install .
 
-CMD ["python", "-m", "backend_api.server", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "api_service.app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS test
 

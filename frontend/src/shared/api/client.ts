@@ -6,6 +6,7 @@ import type {
   SimulationFrame,
 } from "../model/types";
 import type { FrontendWorkspaceStateDto } from "./frontendJsonAdapter";
+import { adaptModelSnapshot, isModelSnapshotDto } from "./frontendJsonAdapter";
 import { isModelRunResponse, toModelRunData } from "./modelRunAdapter";
 import { scenarioFromJson, scenarioToJson } from "./scenarios";
 
@@ -80,6 +81,34 @@ export class ModelApiClient {
       }),
     );
     return scenarioFromJson(payload);
+  }
+
+  async getSnapshot(
+    scenario: ScenarioDraft,
+    tS: number,
+    clientId: string,
+    primaryRoutingStrategyId: RoutingStrategyId,
+  ): Promise<SimulationFrame> {
+    const payload = await readJson(
+      await fetch(`${this.baseUrl}/model/snapshot`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenario: scenarioToJson(scenario),
+          t_s: tS,
+          primary_route_strategy_id: primaryRoutingStrategyId,
+        }),
+      }),
+    );
+    if (!isModelSnapshotDto(payload)) {
+      throw new Error("Backend вернул неподдерживаемый контракт кадра");
+    }
+    return adaptModelSnapshot(payload, {
+      scenario,
+      tS,
+      clientId,
+      routingStrategyId: primaryRoutingStrategyId,
+    });
   }
 
   /** Calculate the complete official time grid in one backend call. */
