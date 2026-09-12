@@ -21,8 +21,8 @@ export function RouteLayer({ links, positions }: Props) {
           name={`${link.sourceId} ↔ ${link.targetId}`}
           polyline={{
             positions: [source, target],
-            width: 4,
-            material: Color.fromCssColorString("#63b3ff"),
+            width: 2.4,
+            material: Color.fromCssColorString("#e27a1d"),
             arcType: ArcType.NONE,
           }}
         />

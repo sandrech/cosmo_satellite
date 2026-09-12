@@ -7,16 +7,27 @@ function number(value: number) {
 }
 
 export function PropertiesPanel() {
-  const { frame, selectedId } = useAppState();
+  const { frame, selectedId, setSelectedId } = useAppState();
   const satellite = frame?.satellites.find((item) => item.id === selectedId);
   const site = frame?.groundSites.find((item) => item.id === selectedId);
 
+  if (!selectedId || (!satellite && !site)) return null;
+
   return (
     <section className="sidebar-section inspector">
-      <h2>☼ Свойства</h2>
-      {!satellite && !site && (
-        <p className="empty-copy">Выберите объект на глобусе или в аутлайнере.</p>
-      )}
+      <header className="sidebar-heading">
+        <h2>Свойства</h2>
+        <button
+          className="sidebar-close"
+          type="button"
+          onClick={() => setSelectedId(null)}
+          aria-label="Закрыть подробную информацию"
+          title="Закрыть"
+        >
+          ×
+        </button>
+      </header>
+
       {satellite && (
         <div className="property-list">
           <h3>{satellite.id}</h3>
@@ -31,11 +42,13 @@ export function PropertiesPanel() {
           </dl>
         </div>
       )}
+
       {site && (
         <div className="property-list">
           <h3>{site.name}</h3>
           <dl>
-            <dt>Роль</dt><dd>{site.role}</dd>
+            <dt>ID</dt><dd>{site.id}</dd>
+            <dt>Роль</dt><dd>{site.role === "gateway" ? "Шлюз" : "Клиент"}</dd>
             <dt>Широта</dt><dd>{site.latDeg}°</dd>
             <dt>Долгота</dt><dd>{site.lonDeg}°</dd>
           </dl>

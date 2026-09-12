@@ -24,9 +24,9 @@ export function SatellitesLayer({
     const selected = satellite.id === selectedId;
     const inRoute = route.includes(satellite.id);
     const color = satellite.failed
-      ? Color.fromCssColorString("#ef6b62")
+      ? Color.fromCssColorString("#d85850")
       : inRoute
-        ? Color.fromCssColorString("#63b3ff")
+        ? Color.fromCssColorString("#e27a1d")
         : Color.WHITE;
     const visible =
       !hiddenNodeIds.has(`plane:${satellite.planeId}`) &&
@@ -39,10 +39,12 @@ export function SatellitesLayer({
         position={satellitePosition(satellite)}
         show={visible && (satellite.active || satellite.failed)}
         point={{
-          pixelSize: selected ? 13 : inRoute ? 10 : 6,
+          pixelSize: selected ? 12 : inRoute ? 9 : 6,
           color,
-          outlineColor: selected ? Color.CYAN : Color.fromCssColorString("#111820"),
-          outlineWidth: selected ? 4 : 2,
+          outlineColor: selected
+            ? Color.fromCssColorString("#e27a1d")
+            : Color.fromCssColorString("#101112"),
+          outlineWidth: selected ? 3 : 2,
           scaleByDistance: new NearFarScalar(2e6, 1.35, 2.4e7, 0.6),
         }}
         label={{

@@ -7,6 +7,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import type {
+  EarthStyle,
   LayerVisibility,
   PageId,
   ScenarioDraft,
@@ -16,6 +17,7 @@ import type {
 import type { SimulationGateway } from "../api/client";
 import { DEFAULT_SCENARIO } from "../api/scenarios";
 import { mockSimulationGateway } from "../api/runs";
+import { FallbackSimulationGateway, HttpSimulationGateway } from "../api/client";
 
 interface AppState {
   page: PageId;
@@ -33,6 +35,8 @@ interface AppState {
   setSelectedId: (value: string | null) => void;
   viewMode: ViewMode;
   setViewMode: (value: ViewMode) => void;
+  earthStyle: EarthStyle;
+  setEarthStyle: (value: EarthStyle) => void;
   layers: LayerVisibility;
   toggleLayer: (key: keyof LayerVisibility) => void;
   setLayerVisibility: (key: keyof LayerVisibility, visible: boolean) => void;
@@ -44,9 +48,14 @@ interface AppState {
 
 const StateContext = createContext<AppState | null>(null);
 
+const defaultSimulationGateway = new FallbackSimulationGateway(
+  new HttpSimulationGateway(),
+  mockSimulationGateway,
+);
+
 export function AppStateProvider({
   children,
-  gateway = mockSimulationGateway,
+  gateway = defaultSimulationGateway,
 }: PropsWithChildren<{ gateway?: SimulationGateway }>) {
   const [page, setPage] = useState<PageId>("analysis");
   const [scenario, setScenario] = useState(DEFAULT_SCENARIO);
@@ -55,8 +64,9 @@ export function AppStateProvider({
   const [error, setError] = useState<string | null>(null);
   const [tS, setTS] = useState(34680);
   const [clientId, setClientId] = useState("C65");
-  const [selectedId, setSelectedId] = useState<string | null>("S20");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("3d");
+  const [earthStyle, setEarthStyle] = useState<EarthStyle>("imagery");
   const [playing, setPlaying] = useState(false);
   const [layers, setLayers] = useState<LayerVisibility>({
     satellites: true,
@@ -119,6 +129,8 @@ export function AppStateProvider({
       setSelectedId,
       viewMode,
       setViewMode,
+      earthStyle,
+      setEarthStyle,
       layers,
       toggleLayer: (key) =>
         setLayers((current) => ({ ...current, [key]: !current[key] })),
@@ -144,6 +156,7 @@ export function AppStateProvider({
       clientId,
       selectedId,
       viewMode,
+      earthStyle,
       layers,
       hiddenNodeIds,
       playing,

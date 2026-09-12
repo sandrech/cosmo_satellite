@@ -5,48 +5,38 @@ body {
 
 button {
   cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 .app-shell {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: 42px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   background: var(--bg);
 }
 
+/* Top bar follows the flat Blender-like workbench from the reference archive. */
 .topbar {
   z-index: 20;
   display: grid;
-  grid-template-columns: 170px minmax(360px, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  padding: 0 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-width: 0;
+  padding: 0;
   border-bottom: 1px solid var(--line);
-  background: rgba(16, 18, 20, 0.98);
+  background: var(--panel);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  letter-spacing: 0.16em;
-}
-
-.brand-mark {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 1px solid #527da3;
-  border-radius: 50%;
-  color: var(--accent);
-}
-
+.workbench-tabs,
 .topbar nav {
-  align-self: stretch;
   display: flex;
-  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  background: var(--panel);
 }
 
 .topbar nav button,
@@ -58,52 +48,69 @@ button {
 
 .topbar nav button {
   position: relative;
-  padding: 0 15px;
+  flex: 0 1 auto;
+  min-width: 130px;
+  max-width: 220px;
+  height: 100%;
+  padding: 0 13px;
+  border-right: 1px solid var(--line-soft);
+  border-top: 2px solid transparent;
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
 }
 
-.topbar nav button:hover,
-.topbar nav button.active {
+.topbar nav button:hover {
+  background: var(--panel-2);
   color: var(--text);
 }
 
-.topbar nav button.active::after {
-  position: absolute;
-  right: 10px;
-  bottom: 0;
-  left: 10px;
-  height: 2px;
-  content: "";
-  background: var(--accent);
+.topbar nav button.active {
+  border-top-color: var(--accent);
+  background: var(--panel-3);
+  color: var(--text-bright);
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
-  font-size: 12px;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 11px;
 }
 
 .scenario-name,
 .source-indicator {
-  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  height: 26px;
+  max-width: 190px;
+  padding: 0 8px;
+  overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 4px;
   background: var(--panel-2);
-  color: #cbd2d9;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .source-indicator {
-  display: flex;
-  align-items: center;
   gap: 7px;
 }
 
 .source-indicator i {
-  width: 7px;
-  height: 7px;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--yellow);
-  box-shadow: 0 0 10px rgba(240, 202, 97, 0.7);
+  background: var(--accent);
+  box-shadow: 0 0 7px rgba(226, 122, 29, 0.55);
 }
 
 .export-control {
@@ -111,7 +118,17 @@ button {
 }
 
 .top-action {
-  padding: 8px 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+.top-action:hover {
+  border-color: var(--line-light);
+  background: var(--panel-3);
+  color: var(--text-bright);
 }
 
 .export-menu,
@@ -121,24 +138,29 @@ button {
   display: grid;
   gap: 8px;
   width: 210px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(25, 29, 33, 0.98);
+  padding: 10px;
+  border: 1px solid var(--line-light);
+  border-radius: 4px;
+  background: rgba(40, 40, 40, 0.98);
   box-shadow: var(--shadow);
 }
 
 .export-menu {
-  top: 40px;
+  top: 32px;
   right: 0;
 }
 
 .export-menu button {
-  padding: 9px 10px;
+  padding: 7px 8px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--panel-3);
   text-align: left;
+}
+
+.export-menu button:hover {
+  border-color: var(--line-light);
+  background: var(--hover);
 }
 
 .page {
@@ -147,7 +169,7 @@ button {
 }
 
 .content-page {
-  padding: 30px clamp(24px, 5vw, 80px) 60px;
+  padding: 24px clamp(20px, 4vw, 64px) 48px;
 }
 
 .page-title,
@@ -159,7 +181,7 @@ button {
 }
 
 .page-title {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .page-title h1,
@@ -172,28 +194,28 @@ button {
 
 .eyebrow {
   color: var(--accent);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .scenario-pill {
-  padding: 9px 12px;
-  border: 1px solid #31516d;
-  border-radius: 999px;
-  color: #a9d5ff;
-  background: #142332;
+  padding: 6px 9px;
+  border: 1px solid rgba(226, 122, 29, 0.55);
+  border-radius: 4px;
+  color: #efb476;
+  background: rgba(226, 122, 29, 0.09);
 }
 
 .content-card,
 .upload-card,
 .recommendation-card,
 .explanation-card {
-  margin-bottom: 18px;
-  padding: 22px;
+  margin-bottom: 14px;
+  padding: 18px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 4px;
   background: var(--panel);
 }
 
@@ -212,15 +234,20 @@ button {
 
 .primary-button,
 .secondary-button {
-  padding: 10px 15px;
-  border-radius: 7px;
-  font-weight: 650;
+  min-height: 30px;
+  padding: 6px 11px;
+  border-radius: 4px;
+  font-weight: 600;
 }
 
 .primary-button {
-  border: 1px solid #59a7ee;
-  background: var(--accent-strong);
-  color: white;
+  border: 1px solid #f08b2c;
+  background: var(--accent);
+  color: #111;
+}
+
+.primary-button:hover {
+  background: #ef8a31;
 }
 
 .secondary-button {
@@ -228,35 +255,50 @@ button {
   background: var(--panel-3);
 }
 
+.secondary-button:hover {
+  border-color: var(--line-light);
+  background: var(--hover);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(160px, 1fr));
-  gap: 16px;
-  margin-top: 18px;
+  gap: 14px;
+  margin-top: 16px;
 }
 
 .form-grid label,
 .variant-selector label {
   display: grid;
-  gap: 7px;
+  gap: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 input,
 select {
   min-width: 0;
-  padding: 10px 11px;
+  padding: 7px 8px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 4px;
   outline: none;
-  background: #101316;
+  background: var(--bg-subtle);
   color: var(--text);
+}
+
+input:hover,
+select:hover {
+  border-color: var(--line-light);
 }
 
 input:focus,
 select:focus {
-  border-color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"],
+input[type="range"] {
+  accent-color: var(--accent);
 }
 
 .failure-row {
@@ -277,22 +319,22 @@ select:focus {
 .run-controls {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .summary-grid article {
   display: grid;
-  gap: 7px;
-  padding: 20px;
+  gap: 6px;
+  padding: 16px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 4px;
   background: var(--panel);
 }
 
@@ -302,7 +344,7 @@ select:focus {
 }
 
 .summary-grid strong {
-  font-size: 28px;
+  font-size: 26px;
 }
 
 .explanation-card {
@@ -325,7 +367,7 @@ select:focus {
 .check-list {
   display: grid;
   gap: 6px;
-  color: #c6ced6;
+  color: #c6c6c6;
 }
 
 .impact-list {
@@ -337,7 +379,7 @@ select:focus {
   display: grid;
   grid-template-columns: 90px repeat(3, 1fr);
   gap: 16px;
-  padding: 13px 0;
+  padding: 11px 0;
   border-top: 1px solid var(--line);
   color: var(--muted);
 }
@@ -349,11 +391,11 @@ select:focus {
 .variant-selector {
   display: flex;
   align-items: end;
-  gap: 16px;
-  margin-bottom: 18px;
-  padding: 18px;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 4px;
   background: var(--panel);
 }
 
@@ -364,7 +406,7 @@ select:focus {
 .two-column {
   display: grid;
   grid-template-columns: minmax(300px, 0.75fr) minmax(480px, 1.25fr);
-  gap: 18px;
+  gap: 14px;
 }
 
 .diff-table > div,
@@ -373,7 +415,7 @@ select:focus {
   display: grid;
   align-items: center;
   gap: 10px;
-  padding: 12px 0;
+  padding: 10px 0;
   border-top: 1px solid var(--line);
 }
 
@@ -401,8 +443,8 @@ select:focus {
 }
 
 .recommendation-card {
-  border-color: #335f4a;
-  background: linear-gradient(135deg, #13251d, #171b1a);
+  border-color: #385443;
+  background: linear-gradient(135deg, #1b231e, #1c1f1d);
 }
 
 .recommendation-card h2 {
@@ -453,15 +495,121 @@ select:focus {
 }
 
 @media (max-width: 1000px) {
-  .topbar {
-    grid-template-columns: auto 1fr;
-  }
   .topbar-actions {
     display: none;
+  }
+  .topbar nav button {
+    min-width: 105px;
   }
   .form-grid,
   .summary-grid,
   .two-column {
     grid-template-columns: 1fr;
   }
+}
+
+/* ========================================================================== 
+   Workbench header — matches the compact document-tab strip in the reference
+   ========================================================================== */
+.app-shell {
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.workbench-header {
+  z-index: 30;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 42px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.workbench-app-button {
+  display: grid;
+  width: 68px;
+  min-width: 68px;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: #1b1b1b;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.workbench-app-button:hover {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.workbench-tabs {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.workbench-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 132px;
+  max-width: 190px;
+  height: 100%;
+  padding: 0 11px;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  border-top: 2px solid transparent;
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.workbench-tab:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.workbench-tab.is-active {
+  border-top-color: var(--accent);
+  background: var(--panel-3);
+  color: var(--text-bright);
+}
+
+.workbench-tab__grip {
+  color: #646464;
+  font-size: 11px;
+}
+
+.workbench-tab__icon {
+  color: #b7b7b7;
+  font-size: 10px;
+}
+
+.workbench-tab.is-active .workbench-tab__icon {
+  color: var(--accent);
+}
+
+.workbench-tab-add {
+  display: grid;
+  width: 38px;
+  min-width: 38px;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: #1a1a1a;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.workbench-tab-add:hover {
+  background: var(--panel-2);
+  color: var(--text-bright);
 }
