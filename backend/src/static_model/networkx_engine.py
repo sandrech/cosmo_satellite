@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import heapq
 import math
 
@@ -11,9 +11,39 @@ from .contracts import ReachabilityPolicy, RouteCostPolicy, TraversalRole
 from .types import Link, NodeKind, StaticNetwork
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class NetworkXGraphAlgorithms:
-    """NetworkX-backed graph algorithms hidden behind the GraphAlgorithms contract."""
+    """NetworkX-backed graph algorithms hidden behind the GraphAlgorithms contract.
+
+    Query graphs are immutable after construction, so reuse them across the many
+    reachability/routing/resilience queries performed for one static snapshot.
+    The cache is deliberately snapshot-local: a dynamic run replaces ``network``
+    every frame, at which point old NetworkX graphs are released immediately.
+    """
+
+    _cached_network: StaticNetwork | None = field(default=None, init=False, repr=False, compare=False)
+    _query_graph_cache: dict[
+        tuple[str, int, frozenset[str]],
+        tuple[nx.DiGraph, dict[str, TraversalRole]],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def _graph(
+        self,
+        network: StaticNetwork,
+        source_id: str,
+        policy: ReachabilityPolicy,
+        excluded_nodes: frozenset[str],
+    ) -> tuple[nx.DiGraph, dict[str, TraversalRole]]:
+        if self._cached_network is not network:
+            self._cached_network = network
+            self._query_graph_cache.clear()
+
+        key = (source_id, id(policy), excluded_nodes)
+        cached = self._query_graph_cache.get(key)
+        if cached is None:
+            cached = _query_graph(network, source_id, policy, excluded_nodes)
+            self._query_graph_cache[key] = cached
+        return cached
 
     def reachable_targets(
         self,
@@ -22,7 +52,7 @@ class NetworkXGraphAlgorithms:
         policy: ReachabilityPolicy,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> tuple[str, ...]:
-        graph, roles = _query_graph(network, source_id, policy, excluded_nodes)
+        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
         if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
             return ()
         reachable = nx.descendants(graph, source_id)
@@ -35,7 +65,7 @@ class NetworkXGraphAlgorithms:
         policy: ReachabilityPolicy,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> tuple[str, ...]:
-        graph, roles = _query_graph(network, source_id, policy, excluded_nodes)
+        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
         if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
             return ()
         targets = {node_id for node_id, role in roles.items() if role == TraversalRole.TARGET}
@@ -57,7 +87,7 @@ class NetworkXGraphAlgorithms:
         cost_policy: RouteCostPolicy,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> tuple[str, ...] | None:
-        graph, roles = _query_graph(network, source_id, policy, excluded_nodes)
+        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
         if source_id not in graph or target_id not in graph or roles.get(target_id) != TraversalRole.TARGET:
             return None
 
@@ -103,13 +133,10 @@ class NetworkXGraphAlgorithms:
         policy: ReachabilityPolicy,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> SatelliteConnectivity:
-        graph, roles = _query_graph(network, source_id, policy, excluded_nodes)
+        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
         targets = [node_id for node_id, role in roles.items() if role == TraversalRole.TARGET]
         if source_id not in graph or not targets:
             return SatelliteConnectivity(0, ())
-        if not any(nx.has_path(graph, source_id, target) for target in targets):
-            return SatelliteConnectivity(0, ())
-
         nodes = {node.id: node for node in network.nodes}
         satellites = [
             node_id
@@ -136,7 +163,13 @@ class NetworkXGraphAlgorithms:
             flow.add_edge(outgoing(target), sink, capacity=infinity)
 
         source = outgoing(source_id)
-        value, partition = nx.minimum_cut(flow, source, sink, capacity="capacity")
+        value, partition = nx.minimum_cut(
+            flow,
+            source,
+            sink,
+            capacity="capacity",
+            flow_func=nx.algorithms.flow.edmonds_karp,
+        )
         left_partition, right_partition = partition
         cut = tuple(sorted(
             satellite_id
