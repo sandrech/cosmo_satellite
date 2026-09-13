@@ -1,0 +1,58 @@
+         1482473 function calls (1477101 primitive calls) in 0.735 seconds
+
+   Ordered by: cumulative time
+   List reduced from 312 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.001    0.001    0.742    0.742 profile_backend.py:51(<lambda>)
+        1    0.002    0.002    0.741    0.741 app.py:191(_calculate_snapshot)
+        1    0.000    0.000    0.667    0.667 facade.py:68(snapshot_at)
+        1    0.000    0.000    0.655    0.655 model.py:226(analyze)
+      147    0.002    0.000    0.647    0.004 model.py:260(_analyze_client)
+        1    0.002    0.002    0.608    0.608 model.py:336(_failure_impacts)
+      147    0.013    0.000    0.321    0.002 networkx_engine.py:171(satellite_connectivity)
+4327/1505    0.004    0.000    0.274    0.000 backends.py:541(_call_if_no_backends_installed)
+      429    0.000    0.000    0.268    0.001 model.py:294(<genexpr>)
+      441    0.002    0.000    0.268    0.001 model.py:393(_select_route)
+      147    0.000    0.000    0.253    0.002 <class 'networkx.utils.decorators.argmap'> compilation 20:1(argmap_minimum_cut_17)
+      147    0.006    0.000    0.252    0.002 maxflow.py:311(minimum_cut)
+      147    0.018    0.000    0.232    0.002 routing.py:150(select_path)
+      147    0.000    0.000    0.198    0.001 <class 'networkx.utils.decorators.argmap'> compilation 24:1(argmap_edmonds_karp_21)
+      147    0.000    0.000    0.197    0.001 edmondskarp.py:120(edmonds_karp)
+      147    0.014    0.000    0.197    0.001 edmondskarp.py:94(edmonds_karp_impl)
+     4884    0.013    0.000    0.170    0.000 networkx_engine.py:91(shortest_path)
+     2628    0.080    0.000    0.148    0.000 networkx_engine.py:126(_shortest_path)
+      147    0.000    0.000    0.137    0.001 <class 'networkx.utils.decorators.argmap'> compilation 28:1(argmap_build_residual_network_25)
+      147    0.021    0.000    0.136    0.001 utils.py:80(build_residual_network)
+    43641    0.073    0.000    0.104    0.000 digraph.py:677(add_edge)
+      778    0.002    0.000    0.085    0.000 networkx_engine.py:58(reachable_targets)
+     5956    0.005    0.000    0.069    0.000 networkx_engine.py:36(_graph)
+        1    0.000    0.000    0.067    0.067 query_adapters.py:22(snapshot_bundle_to_dto)
+        1    0.000    0.000    0.066    0.066 adapters.py:403(static_analysis_to_dto)
+       48    0.001    0.000    0.064    0.001 adapters.py:354(_impact_to_dto)
+      241    0.017    0.000    0.060    0.000 networkx_engine.py:224(_query_graph)
+      432    0.001    0.000    0.060    0.000 adapters.py:334(_delta_to_dto)
+6576/6480    0.035    0.000    0.057    0.000 main.py:253(__init__)
+      572    0.005    0.000    0.056    0.000 adapters.py:206(_route_to_dto)
+        4    0.000    0.000    0.046    0.011 model.py:227(<genexpr>)
+      147    0.042    0.000    0.044    0.000 digraph.py:500(add_nodes_from)
+18817/18721    0.007    0.000    0.042    0.000 {built-in method builtins.sorted}
+    55400    0.014    0.000    0.039    0.000 graph.py:509(__getitem__)
+        6    0.000    0.000    0.029    0.005 model.py:321(<genexpr>)
+    59463    0.021    0.000    0.026    0.000 coreviews.py:81(__getitem__)
+       94    0.000    0.000    0.025    0.000 routing.py:286(_any_path)
+   154577    0.023    0.000    0.023    0.000 {method 'get' of 'dict' objects}
+6577/6481    0.010    0.000    0.023    0.000 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+    36897    0.016    0.000    0.022    0.000 reportviews.py:799(<genexpr>)
+      147    0.016    0.000    0.022    0.000 digraph.py:748(add_edges_from)
+     4506    0.006    0.000    0.022    0.000 routing.py:34(_path_metrics)
+      970    0.001    0.000    0.021    0.000 <class 'networkx.utils.decorators.argmap'> compilation 8:1(argmap_descendants_5)
+     6999    0.008    0.000    0.021    0.000 {built-in method builtins.sum}
+    11618    0.015    0.000    0.020    0.000 digraph.py:450(add_node)
+      970    0.002    0.000    0.020    0.000 dag.py:38(descendants)
+    55847    0.013    0.000    0.018    0.000 misc.py:645(_clear_cache)
+    93770    0.017    0.000    0.017    0.000 {method 'update' of 'dict' objects}
+    38961    0.009    0.000    0.016    0.000 <frozen _collections_abc>:911(__iter__)
+     5285    0.002    0.000    0.016    0.000 breadth_first_search.py:108(bfs_edges)
+
+

@@ -31,8 +31,7 @@ def compare_lexicographic(lhs: RouteQuality, rhs: RouteQuality) -> PreferenceRel
     return PreferenceRelation.EQUAL
 
 
-def _path_metrics(network: StaticNetwork, path: tuple[str, ...]) -> tuple[int, float]:
-    links = {frozenset((link.a, link.b)): link for link in network.links}
+def _path_metrics(links: dict[frozenset[str], Link], path: tuple[str, ...]) -> tuple[int, float]:
     distance = sum(links[frozenset((left, right))].distance_km for left, right in zip(path, path[1:]))
     return max(0, len(path) - 1), distance
 
@@ -56,6 +55,9 @@ class ShortestPathRouting:
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> tuple[tuple[str, ...], RouteQuality] | None:
         del failure_domain
+        if not target_ids:
+            return None
+        links = {frozenset((link.a, link.b)): link for link in network.links}
         candidates: list[tuple[tuple[str, ...], RouteQuality]] = []
         for target_id in target_ids:
             path = graph_algorithms.shortest_path(
@@ -68,7 +70,7 @@ class ShortestPathRouting:
             )
             if path is None:
                 continue
-            hops, distance = _path_metrics(network, path)
+            hops, distance = _path_metrics(links, path)
             if self.quality_kind == "hops":
                 quality = RouteQuality((
                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
@@ -79,7 +81,6 @@ class ShortestPathRouting:
                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
                 ))
             elif self.quality_kind == "cost":
-                links = {frozenset((link.a, link.b)): link for link in network.links}
                 total_cost = 0.0
                 for left, right in zip(path, path[1:]):
                     value = float(self.cost.cost(links[frozenset((left, right))]))
@@ -164,6 +165,7 @@ class ResilientThenDistanceRouting:
             for satellite_id in failure_domain.candidates(network)
             if satellite_id not in excluded_nodes
         )
+        links = {frozenset((link.a, link.b)): link for link in network.links}
         no_backup_penalty = sum(link.distance_km for link in network.links) + 1.0
 
         backup_distance: dict[str, float] = {}
@@ -182,7 +184,7 @@ class ResilientThenDistanceRouting:
                 )
                 if path is None:
                     continue
-                hops, distance = _path_metrics(network, path)
+                hops, distance = _path_metrics(links, path)
                 backup_candidates.append((distance, hops, target_id, path))
             if backup_candidates:
                 best = min(backup_candidates)
@@ -239,7 +241,7 @@ class ResilientThenDistanceRouting:
                 )
                 if path is None:
                     continue
-                hops, distance = _path_metrics(network, path)
+                hops, distance = _path_metrics(links, path)
                 path_satellites = tuple(
                     node_id for node_id in path if nodes[node_id].kind == NodeKind.SATELLITE
                 )

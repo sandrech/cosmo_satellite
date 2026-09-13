@@ -1,0 +1,58 @@
+         163768 function calls (162480 primitive calls) in 0.074 seconds
+
+   Ordered by: cumulative time
+   List reduced from 269 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.075    0.075 profile_backend.py:51(<lambda>)
+        1    0.000    0.000    0.075    0.075 app.py:191(_calculate_snapshot)
+        1    0.000    0.000    0.071    0.071 facade.py:68(snapshot_at)
+        1    0.000    0.000    0.069    0.069 model.py:226(analyze)
+       51    0.001    0.000    0.067    0.001 model.py:260(_analyze_client)
+        1    0.000    0.000    0.064    0.064 model.py:336(_failure_impacts)
+       51    0.003    0.000    0.053    0.001 networkx_engine.py:129(satellite_connectivity)
+ 1071/357    0.001    0.000    0.043    0.000 backends.py:541(_call_if_no_backends_installed)
+       51    0.000    0.000    0.041    0.001 <class 'networkx.utils.decorators.argmap'> compilation 20:1(argmap_minimum_cut_17)
+       51    0.001    0.000    0.040    0.001 maxflow.py:311(minimum_cut)
+       51    0.000    0.000    0.028    0.001 <class 'networkx.utils.decorators.argmap'> compilation 24:1(argmap_edmonds_karp_21)
+       51    0.000    0.000    0.028    0.001 edmondskarp.py:120(edmonds_karp)
+       51    0.002    0.000    0.027    0.001 edmondskarp.py:94(edmonds_karp_impl)
+       51    0.000    0.000    0.020    0.000 <class 'networkx.utils.decorators.argmap'> compilation 28:1(argmap_build_residual_network_25)
+       51    0.004    0.000    0.020    0.000 utils.py:80(build_residual_network)
+     8715    0.014    0.000    0.019    0.000 digraph.py:677(add_edge)
+      204    0.000    0.000    0.012    0.000 networkx_engine.py:48(reachable_targets)
+      306    0.000    0.000    0.009    0.000 networkx_engine.py:30(_graph)
+       51    0.003    0.000    0.009    0.000 networkx_engine.py:182(_query_graph)
+        4    0.000    0.000    0.004    0.001 model.py:227(<genexpr>)
+       51    0.003    0.000    0.004    0.000 digraph.py:748(add_edges_from)
+       51    0.000    0.000    0.004    0.000 <class 'networkx.utils.decorators.argmap'> compilation 32:1(argmap_shortest_path_length_29)
+     7329    0.003    0.000    0.004    0.000 reportviews.py:799(<genexpr>)
+       51    0.000    0.000    0.004    0.000 generic.py:181(shortest_path_length)
+     9789    0.002    0.000    0.003    0.000 misc.py:645(_clear_cache)
+    16398    0.003    0.000    0.003    0.000 {method 'update' of 'dict' objects}
+        1    0.000    0.000    0.003    0.003 query_adapters.py:22(snapshot_bundle_to_dto)
+    17327    0.002    0.000    0.002    0.000 {method 'get' of 'dict' objects}
+       51    0.000    0.000    0.002    0.000 <class 'networkx.utils.decorators.argmap'> compilation 40:1(argmap_single_source_shortest_path_length_37)
+     6609    0.001    0.000    0.002    0.000 <frozen _collections_abc>:911(__iter__)
+       51    0.000    0.000    0.002    0.000 unweighted.py:21(single_source_shortest_path_length)
+       51    0.000    0.000    0.002    0.000 model.py:294(<genexpr>)
+      153    0.000    0.000    0.002    0.000 model.py:393(_select_route)
+        1    0.000    0.000    0.002    0.002 model.py:89(snapshot)
+      204    0.000    0.000    0.002    0.000 <class 'networkx.utils.decorators.argmap'> compilation 8:1(argmap_descendants_5)
+     1650    0.001    0.000    0.002    0.000 unweighted.py:83(_single_shortest_path_length)
+      204    0.000    0.000    0.002    0.000 dag.py:38(descendants)
+        1    0.000    0.000    0.002    0.002 adapters.py:403(static_analysis_to_dto)
+       51    0.001    0.000    0.002    0.000 digraph.py:500(add_nodes_from)
+  550/518    0.000    0.000    0.002    0.000 main.py:253(__init__)
+  551/519    0.001    0.000    0.001    0.000 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+      870    0.001    0.000    0.001    0.000 digraph.py:450(add_node)
+       16    0.000    0.000    0.001    0.000 adapters.py:354(_impact_to_dto)
+     1791    0.000    0.000    0.001    0.000 graph.py:509(__getitem__)
+      204    0.000    0.000    0.001    0.000 breadth_first_search.py:108(bfs_edges)
+       51    0.001    0.000    0.001    0.000 digraph.py:865(remove_edges_from)
+      423    0.001    0.000    0.001    0.000 {built-in method builtins.sum}
+  510/408    0.000    0.000    0.001    0.000 functools.py:979(__get__)
+       51    0.000    0.000    0.001    0.000 digraph.py:1344(reverse)
+       51    0.000    0.000    0.001    0.000 <class 'networkx.utils.decorators.argmap'> compilation 36:1(argmap_reverse_view_33)
+
+

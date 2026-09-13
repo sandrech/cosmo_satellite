@@ -1,0 +1,58 @@
+         27473000 function calls (27454946 primitive calls) in 15.186 seconds
+
+   Ordered by: cumulative time
+   List reduced from 402 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.053    0.053   15.236   15.236 profile_backend.py:55(<lambda>)
+        1    0.002    0.002   15.183   15.183 profile_backend.py:43(dynamic)
+        1    0.000    0.000   14.928   14.928 model.py:103(analyze)
+        1    0.000    0.000   14.863   14.863 model.py:236(_build_frames)
+        4    0.000    0.000   14.863    3.716 model.py:207(iter_frames)
+        3    0.000    0.000   14.863    4.954 model.py:153(frame_at)
+        3    0.000    0.000   14.821    4.940 model.py:226(analyze)
+      441    0.008    0.000   14.782    0.034 model.py:260(_analyze_client)
+        3    0.007    0.002   14.251    4.750 model.py:336(_failure_impacts)
+     1758    0.001    0.000   12.158    0.007 model.py:294(<genexpr>)
+     1323    0.010    0.000   12.156    0.009 model.py:393(_select_route)
+      441    0.182    0.000   11.756    0.027 routing.py:149(select_path)
+    22110    1.230    0.000   10.696    0.000 networkx_engine.py:81(shortest_path)
+    25627    0.029    0.000    8.468    0.000 networkx_engine.py:30(_graph)
+    10790    2.076    0.000    8.273    0.001 networkx_engine.py:182(_query_graph)
+  1780353    3.389    0.000    4.585    0.000 digraph.py:677(add_edge)
+      441    0.090    0.000    2.256    0.005 networkx_engine.py:129(satellite_connectivity)
+24815/15171    0.027    0.000    2.052    0.000 backends.py:541(_call_if_no_backends_installed)
+   518140    1.496    0.000    1.731    0.000 digraph.py:450(add_node)
+      441    0.001    0.000    1.642    0.004 <class 'networkx.utils.decorators.argmap'> compilation 20:1(argmap_minimum_cut_17)
+      441    0.034    0.000    1.636    0.004 maxflow.py:311(minimum_cut)
+      441    0.001    0.000    1.306    0.003 <class 'networkx.utils.decorators.argmap'> compilation 24:1(argmap_edmonds_karp_21)
+      441    0.001    0.000    1.305    0.003 edmondskarp.py:120(edmonds_karp)
+      441    0.060    0.000    1.304    0.003 edmondskarp.py:94(edmonds_karp_impl)
+      441    0.001    0.000    0.989    0.002 <class 'networkx.utils.decorators.argmap'> compilation 28:1(argmap_build_residual_network_25)
+      441    0.145    0.000    0.986    0.002 utils.py:80(build_residual_network)
+    21829    0.821    0.000    0.903    0.000 routing.py:34(_path_metrics)
+  2300257    0.495    0.000    0.732    0.000 misc.py:645(_clear_cache)
+       12    0.000    0.000    0.567    0.047 model.py:227(<genexpr>)
+   644413    0.189    0.000    0.526    0.000 graph.py:509(__getitem__)
+  2520951    0.480    0.000    0.480    0.000 {method 'update' of 'dict' objects}
+     2635    0.008    0.000    0.473    0.000 networkx_engine.py:48(reachable_targets)
+  2879946    0.456    0.000    0.456    0.000 {method 'get' of 'dict' objects}
+     3499    0.005    0.000    0.396    0.000 <class 'networkx.utils.decorators.argmap'> compilation 8:1(argmap_descendants_5)
+     3499    0.036    0.000    0.387    0.000 dag.py:38(descendants)
+   164831    0.044    0.000    0.345    0.000 breadth_first_search.py:108(bfs_edges)
+   675088    0.268    0.000    0.326    0.000 coreviews.py:81(__getitem__)
+   164831    0.173    0.000    0.297    0.000 breadth_first_search.py:19(generic_bfs_edges)
+  1560550    0.253    0.000    0.253    0.000 networkx_engine.py:196(can_depart)
+        1    0.002    0.002    0.247    0.247 dynamic_adapters.py:95(dynamic_analysis_to_dto)
+     6616    0.003    0.000    0.240    0.000 main.py:253(__init__)
+  1756147    0.238    0.000    0.238    0.000 graph.py:473(__contains__)
+  2300489    0.238    0.000    0.238    0.000 {built-in method builtins.getattr}
+     6617    0.011    0.000    0.237    0.000 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+     1172    0.001    0.000    0.236    0.000 dynamic_adapters.py:58(_availability)
+    38324    0.024    0.000    0.233    0.000 {built-in method builtins.max}
+     4688    0.007    0.000    0.223    0.000 dynamic_dto.py:49(validate_statistics)
+  1540045    0.213    0.000    0.213    0.000 networkx_engine.py:199(can_arrive)
+     7042    0.208    0.000    0.208    0.000 dynamic_dto.py:56(<genexpr>)
+      882    0.011    0.000    0.171    0.000 routing.py:48(select_path)
+
+

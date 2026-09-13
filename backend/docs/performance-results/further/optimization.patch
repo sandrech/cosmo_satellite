@@ -1,0 +1,635 @@
+--- /mnt/data/cosmo_opt_baseline_src/cosmo_satellite/backend/src/static_model/networkx_engine.py	2026-09-13 12:02:41.000000000 +0000
++++ /mnt/data/cosmo_opt_work/cosmo_satellite/backend/src/static_model/networkx_engine.py	2026-09-13 12:36:41.666797320 +0000
+@@ -12,6 +12,12 @@
+ from .types import Link, NodeKind, StaticNetwork
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class _ConnectivityEntry:
++    result: SatelliteConnectivity
++    flow_satellites: frozenset[str]
++
++
+ @dataclass(slots=True)
+ class NetworkXGraphAlgorithms:
+     """NetworkX-backed graph algorithms hidden behind the GraphAlgorithms contract.
+@@ -27,11 +33,24 @@
+         tuple[str, int, frozenset[str]],
+         tuple[nx.DiGraph, dict[str, TraversalRole]],
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _adjacency_cache: dict[
++        tuple[str, int, frozenset[str]],
++        tuple[
++            dict[str, tuple[tuple[str, Link], ...]],
++            dict[str, tuple[tuple[str, Link], ...]],
++        ],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+ 
+     _policies: dict[int, ReachabilityPolicy] = field(default_factory=dict, init=False, repr=False, compare=False)
+     _shortest_path_cache: dict[
+         tuple[str, str, int, type, frozenset[str]], tuple[str, ...] | None,
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _connectivity_cache: dict[
++        tuple[str, int, frozenset[str]], _ConnectivityEntry,
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _heuristic_cache: dict[
++        tuple[str, int, str, type], dict[str, float],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+ 
+     def _graph(
+         self,
+@@ -43,7 +62,10 @@
+         if self._cached_network is not network:
+             self._cached_network = network
+             self._query_graph_cache.clear()
++            self._adjacency_cache.clear()
+             self._shortest_path_cache.clear()
++            self._connectivity_cache.clear()
++            self._heuristic_cache.clear()
+             self._policies.clear()
+ 
+         # Retain the object for as long as its identity is used as a cache key.
+@@ -55,6 +77,40 @@
+             self._query_graph_cache[key] = cached
+         return cached
+ 
++    def _adjacency(
++        self,
++        network: StaticNetwork,
++        source_id: str,
++        policy: ReachabilityPolicy,
++        excluded_nodes: frozenset[str],
++    ) -> tuple[
++        dict[str, tuple[tuple[str, Link], ...]],
++        dict[str, tuple[tuple[str, Link], ...]],
++    ]:
++        graph, _ = self._graph(network, source_id, policy, excluded_nodes)
++        key = (source_id, id(policy), excluded_nodes)
++        cached = self._adjacency_cache.get(key)
++        if cached is not None:
++            return cached
++
++        adjacency: dict[str, tuple[tuple[str, Link], ...]] = {}
++        reverse_lists: dict[str, list[tuple[str, Link]]] = {node_id: [] for node_id in graph}
++        for node_id in graph:
++            edges = tuple(sorted(
++                (neighbor, graph[node_id][neighbor]["link"])
++                for neighbor in graph.successors(node_id)
++            ))
++            adjacency[node_id] = edges
++            for neighbor, link in edges:
++                reverse_lists[neighbor].append((node_id, link))
++        reverse = {
++            node_id: tuple(sorted(predecessors))
++            for node_id, predecessors in reverse_lists.items()
++        }
++        cached = (adjacency, reverse)
++        self._adjacency_cache[key] = cached
++        return cached
++
+     def reachable_targets(
+         self,
+         network: StaticNetwork,
+@@ -62,6 +118,32 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...]:
++        if type(policy) is ClientToGatewayReachability:
++            graph, roles = self._graph(network, source_id, policy, frozenset())
++            if (
++                source_id in excluded_nodes
++                or source_id not in graph
++                or roles.get(source_id) != TraversalRole.SOURCE
++            ):
++                return ()
++            adjacency, _ = self._adjacency(network, source_id, policy, frozenset())
++            seen = {source_id}
++            stack = [source_id]
++            while stack:
++                node_id = stack.pop()
++                for neighbor, _ in adjacency[node_id]:
++                    if neighbor in excluded_nodes or neighbor in seen:
++                        continue
++                    seen.add(neighbor)
++                    stack.append(neighbor)
++            return tuple(sorted(
++                node_id
++                for node_id in seen
++                if node_id != source_id
++                and roles[node_id] == TraversalRole.TARGET
++                and node_id not in excluded_nodes
++            ))
++
+         graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+         if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
+             return ()
+@@ -75,6 +157,36 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...]:
++        if type(policy) is ClientToGatewayReachability:
++            graph, roles = self._graph(network, source_id, policy, frozenset())
++            if (
++                source_id in excluded_nodes
++                or source_id not in graph
++                or roles.get(source_id) != TraversalRole.SOURCE
++            ):
++                return ()
++            adjacency, reverse = self._adjacency(network, source_id, policy, frozenset())
++            can_reach_target = {
++                node_id
++                for node_id, role in roles.items()
++                if role == TraversalRole.TARGET and node_id not in excluded_nodes
++            }
++            stack = list(can_reach_target)
++            while stack:
++                node_id = stack.pop()
++                for predecessor, _ in reverse[node_id]:
++                    if predecessor in excluded_nodes or predecessor in can_reach_target:
++                        continue
++                    can_reach_target.add(predecessor)
++                    stack.append(predecessor)
++            return tuple(
++                neighbor
++                for neighbor, _ in adjacency[source_id]
++                if neighbor not in excluded_nodes
++                and roles.get(neighbor) == TraversalRole.TRANSIT
++                and neighbor in can_reach_target
++            )
++
+         graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+         if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
+             return ()
+@@ -88,6 +200,115 @@
+                 result.append(neighbor)
+         return tuple(sorted(result))
+ 
++    def _distance_heuristic(
++        self,
++        network: StaticNetwork,
++        source_id: str,
++        target_id: str,
++        policy: ReachabilityPolicy,
++        cost_policy: RouteCostPolicy,
++    ) -> dict[str, float]:
++        key = (source_id, id(policy), target_id, type(cost_policy))
++        cached = self._heuristic_cache.get(key)
++        if cached is not None:
++            return cached
++
++        _, reverse = self._adjacency(network, source_id, policy, frozenset())
++        if type(cost_policy) is HopCountCost:
++            distance = {target_id: 0.0}
++            queue = [target_id]
++            head = 0
++            while head < len(queue):
++                node_id = queue[head]
++                head += 1
++                next_distance = distance[node_id] + 1.0
++                for predecessor, _ in reverse[node_id]:
++                    if predecessor in distance:
++                        continue
++                    distance[predecessor] = next_distance
++                    queue.append(predecessor)
++        else:
++            distance = {target_id: 0.0}
++            queue: list[tuple[float, str]] = [(0.0, target_id)]
++            while queue:
++                total, node_id = heapq.heappop(queue)
++                if distance.get(node_id) != total:
++                    continue
++                for predecessor, link in reverse[node_id]:
++                    candidate = total + link.distance_km
++                    current = distance.get(predecessor)
++                    if current is None or candidate < current:
++                        distance[predecessor] = candidate
++                        heapq.heappush(queue, (candidate, predecessor))
++
++        self._heuristic_cache[key] = distance
++        return distance
++
++    @staticmethod
++    def _shortest_path_astar(
++        adjacency: dict[str, tuple[tuple[str, Link], ...]],
++        source_id: str,
++        target_id: str,
++        cost_policy: RouteCostPolicy,
++        excluded_nodes: frozenset[str],
++        heuristic: dict[str, float],
++    ) -> tuple[str, ...] | None:
++        source_h = heuristic.get(source_id)
++        if source_h is None:
++            return None
++        start_path = (source_id,)
++        queue: list[tuple[float, float, int, tuple[str, ...], str]] = [
++            (source_h, 0.0, 0, start_path, source_id)
++        ]
++        best: dict[str, tuple[float, int, tuple[str, ...]]] = {
++            source_id: (0.0, 0, start_path)
++        }
++        best_target: tuple[float, int, tuple[str, ...]] | None = None
++        distance_cost = type(cost_policy) is DistanceCost
++
++        while queue:
++            estimate, total_cost, hops, path, node_id = heapq.heappop(queue)
++            if best_target is not None and estimate > best_target[0]:
++                # The exact base-graph distance is a consistent lower bound in
++                # every vertex-deleted subgraph.  Leave a tiny floating margin
++                # so equal mathematical distances cannot be pruned by rounding.
++                margin = 1e-12 * max(1.0, abs(best_target[0]))
++                if estimate - best_target[0] > margin:
++                    break
++            current_best = best.get(node_id)
++            if (
++                current_best is None
++                or current_best[0] != total_cost
++                or current_best[1] != hops
++                or current_best[2] != path
++            ):
++                continue
++            if node_id == target_id:
++                if best_target is None or current_best < best_target:
++                    best_target = current_best
++                continue
++
++            for neighbor, link in adjacency[node_id]:
++                if neighbor in excluded_nodes:
++                    continue
++                neighbor_h = heuristic.get(neighbor)
++                if neighbor_h is None:
++                    continue
++                edge_cost = link.distance_km if distance_cost else 1.0
++                if not math.isfinite(edge_cost) or edge_cost < 0:
++                    raise ValueError("route cost must be finite and non-negative")
++                candidate_path = (*path, neighbor)
++                candidate = (total_cost + edge_cost, hops + 1, candidate_path)
++                current = best.get(neighbor)
++                if current is None or candidate < current:
++                    best[neighbor] = candidate
++                    heapq.heappush(
++                        queue,
++                        (candidate[0] + neighbor_h, candidate[0], candidate[1], candidate[2], neighbor),
++                    )
++
++        return None if best_target is None else best_target[2]
++
+     def shortest_path(
+         self,
+         network: StaticNetwork,
+@@ -118,10 +339,17 @@
+         key = (source_id, target_id, id(policy), type(cost_policy), excluded_nodes)
+         if cacheable and key in self._shortest_path_cache:
+             return self._shortest_path_cache[key]
+-        result = self._shortest_path(graph, source_id, target_id, cost_policy, excluded_nodes)
+         if cacheable:
++            adjacency, _ = self._adjacency(network, source_id, policy, frozenset())
++            heuristic = self._distance_heuristic(
++                network, source_id, target_id, policy, cost_policy
++            )
++            result = self._shortest_path_astar(
++                adjacency, source_id, target_id, cost_policy, excluded_nodes, heuristic
++            )
+             self._shortest_path_cache[key] = result
+-        return result
++            return result
++        return self._shortest_path(graph, source_id, target_id, cost_policy, excluded_nodes)
+ 
+     @staticmethod
+     def _shortest_path(
+@@ -147,7 +375,13 @@
+ 
+         while queue:
+             total_cost, hops, path, node_id = heapq.heappop(queue)
+-            if best.get(node_id) != (total_cost, hops, path):
++            current_best = best.get(node_id)
++            if (
++                current_best is None
++                or current_best[0] != total_cost
++                or current_best[1] != hops
++                or current_best[2] != path
++            ):
+                 continue
+             if node_id == target_id:
+                 return path
+@@ -175,10 +409,76 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> SatelliteConnectivity:
++        # Keep connectivity results snapshot-local just like route results.  For
++        # the reference reachability semantics, a single satellite deletion can
++        # lower vertex connectivity by at most one.  A maximum-flow witness from
++        # the baseline lets us resolve most N-1 queries without another flow:
++        #
++        # * deleting a vertex of an already known minimum cut gives k-1 exactly;
++        # * deleting a satellite unused by one integral k-flow leaves that same
++        #   k-flow intact, so connectivity stays k;
++        # * only a used, non-cut satellite is ambiguous and needs recomputation.
++        #
++        # This is exact, not a heuristic.  Custom policies retain the general
++        # full-flow path because their graph shape is not assumed here.
++        self._graph(network, source_id, policy, frozenset())
++        self._policies[id(policy)] = policy
++        key = (source_id, id(policy), excluded_nodes)
++        cached = self._connectivity_cache.get(key)
++        if cached is not None:
++            return cached.result
++
++        if type(policy) is ClientToGatewayReachability and len(excluded_nodes) == 1:
++            failed = next(iter(excluded_nodes))
++            node = next((item for item in network.nodes if item.id == failed), None)
++            if node is not None and node.kind == NodeKind.SATELLITE:
++                baseline_key = (source_id, id(policy), frozenset())
++                baseline = self._connectivity_cache.get(baseline_key)
++                if baseline is None:
++                    baseline = self._compute_satellite_connectivity(
++                        network, source_id, policy, frozenset()
++                    )
++                    self._connectivity_cache[baseline_key] = baseline
++
++                k = baseline.result.node_disjoint_path_count
++                cut = baseline.result.minimum_cut
++                if k == 0:
++                    entry = _ConnectivityEntry(SatelliteConnectivity(0, ()), frozenset())
++                    self._connectivity_cache[key] = entry
++                    return entry.result
++                if failed in cut:
++                    result = SatelliteConnectivity(
++                        k - 1,
++                        tuple(node_id for node_id in cut if node_id != failed),
++                    )
++                    entry = _ConnectivityEntry(result, frozenset())
++                    self._connectivity_cache[key] = entry
++                    return result
++                if failed not in baseline.flow_satellites:
++                    # The baseline cut is still present and the witnessed k-flow
++                    # avoids the removed satellite, proving equality both ways.
++                    entry = _ConnectivityEntry(baseline.result, baseline.flow_satellites)
++                    self._connectivity_cache[key] = entry
++                    return entry.result
++
++        entry = self._compute_satellite_connectivity(
++            network, source_id, policy, excluded_nodes
++        )
++        self._connectivity_cache[key] = entry
++        return entry.result
++
++    def _compute_satellite_connectivity(
++        self,
++        network: StaticNetwork,
++        source_id: str,
++        policy: ReachabilityPolicy,
++        excluded_nodes: frozenset[str],
++    ) -> _ConnectivityEntry:
+         graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+         targets = [node_id for node_id, role in roles.items() if role == TraversalRole.TARGET]
+         if source_id not in graph or not targets:
+-            return SatelliteConnectivity(0, ())
++            return _ConnectivityEntry(SatelliteConnectivity(0, ()), frozenset())
++
+         nodes = {node.id: node for node in network.nodes}
+         satellites = [
+             node_id
+@@ -205,20 +505,34 @@
+             flow.add_edge(outgoing(target), sink, capacity=infinity)
+ 
+         source = outgoing(source_id)
+-        value, partition = nx.minimum_cut(
+-            flow,
+-            source,
+-            sink,
+-            capacity="capacity",
+-            flow_func=nx.algorithms.flow.edmonds_karp,
++        residual = nx.algorithms.flow.edmonds_karp(
++            flow, source, sink, capacity="capacity", value_only=True
+         )
+-        left_partition, right_partition = partition
++        flow_satellites = frozenset(
++            satellite_id
++            for satellite_id in satellites
++            if residual[incoming(satellite_id)][outgoing(satellite_id)]["flow"] > 0
++        )
++
++        # Match networkx.minimum_cut's partition construction exactly so the
++        # persisted deterministic cut stays byte-for-byte compatible.
++        saturated = [
++            (left, right, data)
++            for left, right, data in residual.edges(data=True)
++            if data["flow"] == data["capacity"]
++        ]
++        residual.remove_edges_from(saturated)
++        sink_side = set(nx.shortest_path_length(residual, target=sink))
++        source_side = set(flow) - sink_side
++        residual.add_edges_from(saturated)
++
+         cut = tuple(sorted(
+             satellite_id
+             for satellite_id in satellites
+-            if incoming(satellite_id) in left_partition and outgoing(satellite_id) in right_partition
++            if incoming(satellite_id) in source_side and outgoing(satellite_id) in sink_side
+         ))
+-        return SatelliteConnectivity(int(value), cut)
++        result = SatelliteConnectivity(int(residual.graph["flow_value"]), cut)
++        return _ConnectivityEntry(result, flow_satellites)
+ 
+ 
+ def _query_graph(
+--- /mnt/data/cosmo_opt_baseline_src/cosmo_satellite/backend/tests/static_model/test_optimized_graph.py	2026-09-13 12:02:41.000000000 +0000
++++ /mnt/data/cosmo_opt_work/cosmo_satellite/backend/tests/static_model/test_optimized_graph.py	2026-09-13 12:37:04.847546029 +0000
+@@ -126,3 +126,77 @@
+     assert NetworkXGraphAlgorithms().shortest_path(
+         network, 'C', 'G', PartialPolicy(), DistanceCost(), frozenset(('S',)),
+     ) == ('C', 'G')
++
++
++def _valid_random_network(seed: int) -> StaticNetwork:
++    rng = random.Random(seed)
++    satellites = tuple(Node(f'S{i}', NodeKind.SATELLITE) for i in range(6))
++    nodes = (Node('C', NodeKind.CLIENT), *satellites, Node('G0', NodeKind.GATEWAY), Node('G1', NodeKind.GATEWAY))
++    links: list[Link] = []
++    for satellite in satellites:
++        if rng.random() < .65:
++            links.append(Link('C', satellite.id, 1.0 + rng.random(), LinkKind.GROUND_SATELLITE))
++        for gateway in ('G0', 'G1'):
++            if rng.random() < .45:
++                links.append(Link(satellite.id, gateway, 1.0 + rng.random(), LinkKind.GROUND_SATELLITE))
++    for left, right in combinations(satellites, 2):
++        if rng.random() < .4:
++            links.append(Link(left.id, right.id, 1.0 + rng.random(), LinkKind.INTER_SATELLITE))
++    return StaticNetwork(nodes, tuple(links))
++
++
++@pytest.mark.parametrize('seed', range(24))
++def test_reference_reachability_fast_paths_match_materialized_exclusion_graph(seed):
++    import networkx as nx
++    from static_model.networkx_engine import _query_graph
++    from static_model.contracts import TraversalRole
++
++    network = _valid_random_network(seed)
++    engine = NetworkXGraphAlgorithms()
++    policy = ClientToGatewayReachability()
++    exclusions = [frozenset(), *(frozenset((f'S{i}',)) for i in range(6))]
++
++    for excluded in exclusions:
++        graph, roles = _query_graph(network, 'C', policy, excluded)
++        if 'C' not in graph or roles.get('C') != TraversalRole.SOURCE:
++            expected_targets = ()
++            expected_first_hops = ()
++        else:
++            descendants = nx.descendants(graph, 'C')
++            expected_targets = tuple(sorted(
++                node_id for node_id in descendants if roles[node_id] == TraversalRole.TARGET
++            ))
++            targets = {node_id for node_id, role in roles.items() if role == TraversalRole.TARGET}
++            expected_first_hops = tuple(sorted(
++                neighbor
++                for neighbor in graph.successors('C')
++                if roles.get(neighbor) == TraversalRole.TRANSIT
++                and ((nx.descendants(graph, neighbor) | {neighbor}) & targets)
++            ))
++
++        assert engine.reachable_targets(network, 'C', policy, excluded) == expected_targets
++        assert engine.viable_first_hops(network, 'C', policy, excluded) == expected_first_hops
++
++
++@pytest.mark.parametrize('seed', range(24))
++def test_single_satellite_connectivity_fast_path_preserves_exact_connectivity(seed):
++    network = _valid_random_network(seed)
++    policy = ClientToGatewayReachability()
++    optimized = NetworkXGraphAlgorithms()
++    reference = NetworkXGraphAlgorithms()
++
++    baseline = optimized.satellite_connectivity(network, 'C', policy)
++    reference_baseline = reference._compute_satellite_connectivity(network, 'C', policy, frozenset()).result
++    assert baseline == reference_baseline
++
++    for index in range(6):
++        excluded = frozenset((f'S{index}',))
++        actual = optimized.satellite_connectivity(network, 'C', policy, excluded)
++        expected = reference._compute_satellite_connectivity(network, 'C', policy, excluded).result
++        assert actual.node_disjoint_path_count == expected.node_disjoint_path_count
++        assert len(actual.minimum_cut) == actual.node_disjoint_path_count
++
++        # The fast path may return a different but equally valid minimum cut.
++        # Validate that its satellite set really disconnects service.
++        cut_excluded = excluded | frozenset(actual.minimum_cut)
++        assert not optimized.reachable_targets(network, 'C', policy, cut_excluded)
+--- /dev/null
++++ backend/docs/PERFORMANCE-further.md
+@@ -0,0 +1,117 @@
++# Дальнейшая оптимизация backend — 13 сентября 2026
++
++## Результат
++
++Этот проход сравнивает итоговую версию **не с первоначальным проектом**, а непосредственно с уже
++оптимизированным архивом `cosmo_satellite_backend_optimized.tar(1).xz`, полученным на входе этого прохода.
++То есть ускорения ниже идут поверх предыдущих оптимизаций.
++
++Один прогрев и пять повторов каждой нагрузки, свежая модель на повтор; показатель — медиана.
++Все шесть сериализованных результатов до и после имеют одинаковый SHA-256.
++
++| Нагрузка | Загруженная версия, с | После, с | Ускорение |
++| --- | ---: | ---: | ---: |
++| Полная группировка, 34 680 с | 0.5974 | 0.1696 | **3.52×** |
++| Первый запуск, 34 680 с | 0.0279 | 0.0068 | **4.12×** |
++| Отказы спутников, 34 680 с | 0.1581 | 0.0197 | **8.04×** |
++| Ограничение дальности, 34 680 с | 0.2483 | 0.0865 | **2.87×** |
++| Полная группировка, 0 с | 0.5321 | 0.1795 | **2.96×** |
++| Динамика: 0, 120, 240 с | 1.6053 | 0.4314 | **3.72×** |
++
++Среда этого сравнения: CPython 3.13.5, Linux x86_64, 5 видимых CPU, NetworkX 3.6.1,
++Pydantic 2.13.4, FastAPI 0.128.2. Это локальные сравнительные измерения; абсолютное время на другой
++машине может отличаться. Обе версии измерялись в одной среде и одним скриптом.
++
++## Что изменено
++
++### 1. Достижимость без материализации графа отказов
++
++Для стандартной `ClientToGatewayReachability` движок больше не строит отдельный NetworkX-граф для каждого
++набора исключённых спутников. Снимок сети индексируется один раз, после чего достижимость и первый допустимый
++шаг считаются непосредственно по общей adjacency-структуре с пропуском исключённых вершин.
++
++Пользовательские реализации policy по-прежнему получают обычный граф и сохраняют прежний контракт.
++Оптимизирован только известный встроенный immutable-path.
++
++### 2. Точный A* для стандартных стоимостей
++
++Для встроенных `DistanceCost` и `HopCountCost` повторные Dijkstra заменены детерминированным A*.
++Эвристика — точное расстояние от вершины до цели в базовом графе без исключений. После удаления вершин оно
++остаётся допустимой нижней границей, поэтому поиск не меняет оптимальный маршрут. Сохраняется прежний
++порядок разрешения равенств: стоимость, число переходов, лексикографический путь.
++
++Эвристики кэшируются в пределах текущего `StaticNetwork`. Пользовательские cost/policy и их подклассы идут
++по прежнему общему Dijkstra-пути, чтобы не делать предположений об их мутабельности и семантике.
++
++### 3. Большинство N−1 minimum-cut без нового max-flow
++
++Главный оставшийся bottleneck предыдущего прохода — повторный точный `minimum_cut` для каждого одиночного
++отказа спутника. Теперь для базовой сети один раз сохраняются:
++
++- значение vertex-connectivity `κ` и один минимальный разрез;
++- множество спутников, через которые проходит один целочисленный поток величины `κ`.
++
++Для удаления одной вершины `v` значение vertex-connectivity может уменьшиться не больше чем на единицу.
++Отсюда два точных fast path:
++
++- если `v` входит в уже найденный минимальный разрез, после удаления `v` связность равна `κ - 1`;
++- если `v` не используется сохранённым потоком величины `κ`, этот поток остаётся допустимым, значит связность
++  остаётся `κ`.
++
++Только неоднозначный остаток запускает полный max-flow. Это не эвристика: fast path выводит точное значение;
++возвращаемый minimum cut может быть другим минимальным разрезом, но остаётся корректным. На полной
++группировке 34 680 с профиль показывает **7** реальных `_compute_satellite_connectivity` вместо 147
++логических запросов `satellite_connectivity`.
++
++### 4. Кэши строго привязаны к снимку
++
++Adjacency, обратная adjacency, эвристики, результаты путей и connectivity сбрасываются при смене объекта
++`StaticNetwork`. Объекты политик удерживаются, пока их identity участвует в ключах кэша, поэтому повторное
++использование освобождённого Python `id` не может подменить семантику запроса.
++
++## Корректность
++
++Итоговый backend проходит **239 pytest-тестов**. К уже имевшимся проверкам добавлено 48 параметризованных
++случаев на воспроизводимых случайных графах:
++
++- 24 случая сравнивают оптимизированную достижимость и первый hop с эталонным материализованным графом
++  исключений;
++- 24 случая сравнивают single-satellite connectivity с полным независимым max-flow и дополнительно проверяют,
++  что возвращаемый cut действительно разрывает service connectivity.
++
++Во всех шести performance-нагрузках SHA-256 полного JSON результата до и после одинаков. Это включает
++маршруты, резервные пути, метрики, connectivity, последствия отказов, критичность и динамические агрегаты.
++
++## Что показывает итоговый профиль
++
++Для полной группировки на 34 680 с:
++
++- 7 полных `_compute_satellite_connectivity` вместо 147 логических N−1 запросов;
++- 3 857 запусков `_shortest_path_astar` при 7 339 запросах пути — остальные закрываются snapshot-cache;
++- только 7 `_query_graph` для тех случаев, где полный материализованный граф действительно ещё требуется.
++
++Для трёх динамических кадров профиль показывает 36 полных connectivity/max-flow вычислений и 36 `_query_graph`.
++Профилировщик существенно замедляет Python, поэтому эти числа используются для структуры затрат, а не как
++wall-clock из таблицы выше.
++
++## Воспроизведение
++
++Из корня итогового проекта:
++
++```bash
++python3 backend/tools/profile_backend.py \
++  --repo /path/to/unpacked/cosmo_satellite_backend_optimized \
++  --output /tmp/further-before --repeats 5
++
++python3 backend/tools/profile_backend.py \
++  --output /tmp/further-after --repeats 5
++
++python3 backend/tools/compare_backend_profiles.py \
++  /tmp/further-before /tmp/further-after
++
++cd backend
++python3 -m pytest -ra
++```
++
++В `docs/performance-results/further/` сохранены две итоговые `summary.json` и patch этого прохода.
++Предыдущий performance-отчёт и его результаты оставлены без изменения.

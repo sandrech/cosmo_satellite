@@ -1,0 +1,691 @@
+--- a/backend/src/static_model/networkx_engine.py
++++ b/backend/src/static_model/networkx_engine.py
+@@ -8,6 +8,7 @@
+ 
+ from .analysis import SatelliteConnectivity
+ from .contracts import ReachabilityPolicy, RouteCostPolicy, TraversalRole
++from .policies import ClientToGatewayReachability, DistanceCost, HopCountCost
+ from .types import Link, NodeKind, StaticNetwork
+ 
+ 
+@@ -27,6 +28,11 @@
+         tuple[nx.DiGraph, dict[str, TraversalRole]],
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
+ 
++    _policies: dict[int, ReachabilityPolicy] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _shortest_path_cache: dict[
++        tuple[str, str, int, type, frozenset[str]], tuple[str, ...] | None,
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
++
+     def _graph(
+         self,
+         network: StaticNetwork,
+@@ -37,7 +43,11 @@
+         if self._cached_network is not network:
+             self._cached_network = network
+             self._query_graph_cache.clear()
+-
++            self._shortest_path_cache.clear()
++            self._policies.clear()
++
++        # Retain the object for as long as its identity is used as a cache key.
++        self._policies[id(policy)] = policy
+         key = (source_id, id(policy), excluded_nodes)
+         cached = self._query_graph_cache.get(key)
+         if cached is None:
+@@ -87,10 +97,40 @@
+         cost_policy: RouteCostPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...] | None:
+-        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+-        if source_id not in graph or target_id not in graph or roles.get(target_id) != TraversalRole.TARGET:
++        # Exclusions only remove vertices. Search the base graph while skipping
++        # them instead of materializing thousands of N-1/N-2 graphs per frame.
++        # Preserve custom role evaluation on the original excluded-node graph.
++        graph_excluded = frozenset() if type(policy) is ClientToGatewayReachability else excluded_nodes
++        graph, roles = self._graph(network, source_id, policy, graph_excluded)
++        if (
++            source_id in excluded_nodes or target_id in excluded_nodes
++            or source_id not in graph or target_id not in graph
++            or roles.get(target_id) != TraversalRole.TARGET
++        ):
+             return None
+ 
++        # Only the exact built-in, immutable policies have reusable cost values.
++        # Custom policies (including subclasses) still run on each search.
++        cacheable = (
++            type(policy) is ClientToGatewayReachability
++            and type(cost_policy) in (DistanceCost, HopCountCost)
++        )
++        key = (source_id, target_id, id(policy), type(cost_policy), excluded_nodes)
++        if cacheable and key in self._shortest_path_cache:
++            return self._shortest_path_cache[key]
++        result = self._shortest_path(graph, source_id, target_id, cost_policy, excluded_nodes)
++        if cacheable:
++            self._shortest_path_cache[key] = result
++        return result
++
++    @staticmethod
++    def _shortest_path(
++        graph: nx.DiGraph,
++        source_id: str,
++        target_id: str,
++        cost_policy: RouteCostPolicy,
++        excluded_nodes: frozenset[str],
++    ) -> tuple[str, ...] | None:
+         # Dijkstra with an explicit deterministic total order.  The primary
+         # criterion remains the configured non-negative additive cost; equal
+         # costs are resolved by fewer hops and then lexicographic node path.
+@@ -113,6 +153,8 @@
+                 return path
+ 
+             for neighbor in sorted(graph.successors(node_id)):
++                if neighbor in excluded_nodes:
++                    continue
+                 link = graph[node_id][neighbor]["link"]
+                 edge_cost = float(cost_policy.cost(link))
+                 if not math.isfinite(edge_cost) or edge_cost < 0:
+--- a/backend/src/static_model/routing.py
++++ b/backend/src/static_model/routing.py
+@@ -31,8 +31,7 @@
+     return PreferenceRelation.EQUAL
+ 
+ 
+-def _path_metrics(network: StaticNetwork, path: tuple[str, ...]) -> tuple[int, float]:
+-    links = {frozenset((link.a, link.b)): link for link in network.links}
++def _path_metrics(links: dict[frozenset[str], Link], path: tuple[str, ...]) -> tuple[int, float]:
+     distance = sum(links[frozenset((left, right))].distance_km for left, right in zip(path, path[1:]))
+     return max(0, len(path) - 1), distance
+ 
+@@ -56,6 +55,9 @@
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[tuple[str, ...], RouteQuality] | None:
+         del failure_domain
++        if not target_ids:
++            return None
++        links = {frozenset((link.a, link.b)): link for link in network.links}
+         candidates: list[tuple[tuple[str, ...], RouteQuality]] = []
+         for target_id in target_ids:
+             path = graph_algorithms.shortest_path(
+@@ -68,7 +70,7 @@
+             )
+             if path is None:
+                 continue
+-            hops, distance = _path_metrics(network, path)
++            hops, distance = _path_metrics(links, path)
+             if self.quality_kind == "hops":
+                 quality = RouteQuality((
+                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
+@@ -79,7 +81,6 @@
+                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
+                 ))
+             elif self.quality_kind == "cost":
+-                links = {frozenset((link.a, link.b)): link for link in network.links}
+                 total_cost = 0.0
+                 for left, right in zip(path, path[1:]):
+                     value = float(self.cost.cost(links[frozenset((left, right))]))
+@@ -164,6 +165,7 @@
+             for satellite_id in failure_domain.candidates(network)
+             if satellite_id not in excluded_nodes
+         )
++        links = {frozenset((link.a, link.b)): link for link in network.links}
+         no_backup_penalty = sum(link.distance_km for link in network.links) + 1.0
+ 
+         backup_distance: dict[str, float] = {}
+@@ -182,7 +184,7 @@
+                 )
+                 if path is None:
+                     continue
+-                hops, distance = _path_metrics(network, path)
++                hops, distance = _path_metrics(links, path)
+                 backup_candidates.append((distance, hops, target_id, path))
+             if backup_candidates:
+                 best = min(backup_candidates)
+@@ -239,7 +241,7 @@
+                 )
+                 if path is None:
+                     continue
+-                hops, distance = _path_metrics(network, path)
++                hops, distance = _path_metrics(links, path)
+                 path_satellites = tuple(
+                     node_id for node_id in path if nodes[node_id].kind == NodeKind.SATELLITE
+                 )
+--- /dev/null
++++ b/backend/tests/static_model/test_optimized_graph.py
+@@ -0,0 +1,128 @@
++from dataclasses import replace
++from itertools import combinations
++import random
++
++import pytest
++
++from static_model import (
++    ClientToGatewayReachability, DistanceCost, HopCountCost, Link, LinkKind,
++    NetworkXGraphAlgorithms, Node, NodeKind, StaticNetwork,
++)
++
++
++def _network(seed: int) -> StaticNetwork:
++    rng = random.Random(seed)
++    nodes = (Node('C', NodeKind.CLIENT), Node('OTHER', NodeKind.CLIENT),
++             *(Node(f'S{i}', NodeKind.SATELLITE, rng.random() > .1) for i in range(4)),
++             Node('G0', NodeKind.GATEWAY), Node('G1', NodeKind.GATEWAY, seed % 3 != 0))
++    links = tuple(Link(a.id, b.id, float(rng.randrange(4)), LinkKind.INTER_SATELLITE)
++                  for a, b in combinations(nodes, 2) if rng.random() < .45)
++    return StaticNetwork(nodes, links)
++
++
++def _enumerated_path(network, target, excluded, cost):
++    """Independent exhaustive oracle: clients/gateways never relay traffic."""
++    nodes = {node.id: node for node in network.nodes if node.available and node.id not in excluded}
++    if 'C' not in nodes or target not in nodes:
++        return None
++    adjacency = {node_id: [] for node_id in nodes}
++    for link in network.links:
++        if link.a in nodes and link.b in nodes:
++            adjacency[link.a].append((link.b, link))
++            adjacency[link.b].append((link.a, link))
++    candidates = []
++
++    def visit(path, total):
++        if path[-1] == target:
++            candidates.append((total, len(path) - 1, path))
++            return
++        for neighbor, link in adjacency[path[-1]]:
++            if neighbor not in path and (neighbor == target or nodes[neighbor].kind == NodeKind.SATELLITE):
++                visit((*path, neighbor), total + cost.cost(link))
++
++    visit(('C',), 0.)
++    return min(candidates)[2] if candidates else None
++
++
++@pytest.mark.parametrize('seed', range(30))
++def test_shortest_paths_match_exhaustive_oracle_with_failures_and_ties(seed):
++    network = _network(seed)
++    engine = NetworkXGraphAlgorithms()
++    policy = ClientToGatewayReachability()
++    exclusions = [frozenset(), *(frozenset((n.id,)) for n in network.nodes),
++                  *(frozenset(pair) for pair in combinations(('S0', 'S1', 'S2', 'S3'), 2))]
++    for excluded in exclusions:
++        for target in ('G1', 'G0'):
++            for cost in (DistanceCost(), HopCountCost()):
++                expected = _enumerated_path(network, target, excluded, cost)
++                for _ in range(2):
++                    assert engine.shortest_path(network, 'C', target, policy, cost, excluded) == expected
++
++
++def test_snapshot_switch_invalidates_cached_paths_and_unreachable_results():
++    network = StaticNetwork(
++        (Node('C', NodeKind.CLIENT), Node('S', NodeKind.SATELLITE), Node('G', NodeKind.GATEWAY)),
++        (Link('C', 'S', 1., LinkKind.GROUND_SATELLITE), Link('S', 'G', 1., LinkKind.GROUND_SATELLITE)),
++    )
++    disconnected = replace(network, links=network.links[:1])
++    engine = NetworkXGraphAlgorithms()
++    policy = ClientToGatewayReachability()
++    for snapshot, expected in ((network, ('C', 'S', 'G')), (disconnected, None), (network, ('C', 'S', 'G'))):
++        assert engine.shortest_path(snapshot, 'C', 'G', policy, DistanceCost()) == expected
++        assert engine.shortest_path(snapshot, 'C', 'G', policy, DistanceCost()) == expected
++        assert engine._cached_network is snapshot
++        assert len(engine._shortest_path_cache) == 1
++        assert len(engine._query_graph_cache) == 1
++
++
++def test_custom_cost_and_subclass_are_evaluated_without_path_memoization():
++    network = StaticNetwork(
++        (Node('C', NodeKind.CLIENT), Node('A', NodeKind.SATELLITE),
++         Node('B', NodeKind.SATELLITE), Node('G', NodeKind.GATEWAY)),
++        tuple(Link(a, b, 1., LinkKind.GROUND_SATELLITE)
++              for a, b in (('C', 'A'), ('A', 'G'), ('C', 'B'), ('B', 'G'))),
++    )
++    state = {'penalty': 'B'}
++
++    class ChangingCost(DistanceCost):
++        def cost(self, link):
++            return 10. if state['penalty'] in (link.a, link.b) else 1.
++
++    engine = NetworkXGraphAlgorithms()
++    policy = ClientToGatewayReachability()
++    cost = ChangingCost()
++    assert engine.shortest_path(network, 'C', 'G', policy, cost) == ('C', 'A', 'G')
++    state['penalty'] = 'A'
++    assert engine.shortest_path(network, 'C', 'G', policy, cost) == ('C', 'B', 'G')
++    assert not engine._shortest_path_cache
++
++
++@pytest.mark.parametrize('value', [-1., float('nan'), float('inf')])
++def test_custom_invalid_cost_is_still_rejected(value):
++    network = StaticNetwork(
++        (Node('C', NodeKind.CLIENT), Node('G', NodeKind.GATEWAY)),
++        (Link('C', 'G', 1., LinkKind.GROUND_SATELLITE),),
++    )
++
++    class InvalidCost:
++        def cost(self, link):
++            return value
++
++    with pytest.raises(ValueError, match='finite and non-negative'):
++        NetworkXGraphAlgorithms().shortest_path(network, 'C', 'G', ClientToGatewayReachability(), InvalidCost())
++
++
++def test_custom_reachability_does_not_evaluate_excluded_nodes():
++    network = StaticNetwork(
++        (Node('C', NodeKind.CLIENT), Node('S', NodeKind.SATELLITE), Node('G', NodeKind.GATEWAY)),
++        (Link('C', 'G', 1., LinkKind.GROUND_SATELLITE),),
++    )
++
++    class PartialPolicy(ClientToGatewayReachability):
++        def role(self, node, source_id):
++            assert node.id != 'S'
++            return super().role(node, source_id)
++
++    assert NetworkXGraphAlgorithms().shortest_path(
++        network, 'C', 'G', PartialPolicy(), DistanceCost(), frozenset(('S',)),
++    ) == ('C', 'G')
+--- /dev/null
++++ b/backend/tools/profile_backend.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python3
++"""Benchmark the actual API plan; keep profiling separate from wall-clock timing."""
++from __future__ import annotations
++
++import argparse
++import cProfile
++import gc
++import hashlib
++import importlib.metadata
++import json
++import os
++from pathlib import Path
++import platform
++import pstats
++import statistics
++import sys
++import time
++import tracemalloc
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
++    parser.add_argument('--output', type=Path, required=True)
++    parser.add_argument('--repeats', type=int, default=5)
++    parser.add_argument('--frames', type=int, default=3)
++    parser.add_argument('--profile', action='store_true')
++    parser.add_argument('--memory', action='store_true')
++    args = parser.parse_args()
++    if args.repeats < 1 or args.frames < 1:
++        parser.error('repeats and frames must be positive')
++    repo = args.repo.resolve()
++    sys.path.insert(0, str(repo / 'backend/src'))
++    from api_service.app import _calculate_snapshot, _decode_scenario, _static_plan
++    from cosmo_a_json import adapt_scenario
++    from dynamic_model import DynamicModel, TimeGrid
++    from frontend_json import dynamic_analysis_to_dto
++    from spatial3d import SpatialModel
++
++    args.output.mkdir(parents=True, exist_ok=True)
++    scenarios = {p.stem: json.loads(p.read_text()) for p in sorted((repo / 'data/scenarios').glob('*.json'))}
++
++    def dynamic(raw):
++        adapted = adapt_scenario(_decode_scenario(raw))
++        spatial = SpatialModel.create(adapted.spatial, adapted.trajectory).value
++        model = DynamicModel.create(spatial, TimeGrid.from_horizon(args.frames * 120, 120),
++                                    adapted.calculation.target_availability,
++                                    static_plan=_static_plan('minimum_hops')).value
++        return dynamic_analysis_to_dto(model.analyze().value).model_dump(mode='json')
++
++    workloads = [(name + '-snapshot-34680', lambda raw=raw: _calculate_snapshot(raw, 34680., 'minimum_hops'))
++                 for name, raw in scenarios.items()]
++    raw = scenarios['01_full_constellation']
++    workloads += [('01_full_constellation-snapshot-0', lambda: _calculate_snapshot(raw, 0., 'minimum_hops')),
++                  (f'01_full_constellation-dynamic-{args.frames}', lambda: dynamic(raw))]
++    report = {'environment': {'python': sys.version, 'platform': platform.platform(),
++              'processor': platform.processor(), 'cpu_count': os.cpu_count(),
++              'dependencies': {name: importlib.metadata.version(name) for name in ('networkx', 'pydantic', 'fastapi')}},
++              'method': {'repeats': args.repeats, 'warmups': 1, 'frames': args.frames,
++                         'plan': 'api_service.app._static_plan: all 3 strategies, resilience and failure impacts',
++                         'timing': 'perf_counter, fresh model each iteration; JSON serialization after timing'},
++              'workloads': []}
++    for name, run in workloads:
++        gc.collect()
++        run()
++        samples = []
++        digest = None
++        for _ in range(args.repeats):
++            gc.collect()
++            start = time.perf_counter()
++            result = run()
++            samples.append(time.perf_counter() - start)
++            encoded = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
++            current_digest = hashlib.sha256(encoded.encode()).hexdigest()
++            if digest is not None and digest != current_digest:
++                raise AssertionError(f'non-deterministic output: {name}')
++            digest = current_digest
++        (args.output / f'{name}.json').write_text(encoded, encoding='utf-8')
++        row = {'name': name, 'samples_s': samples, 'median_s': statistics.median(samples),
++               'min_s': min(samples), 'max_s': max(samples), 'output_sha256': digest,
++               'output_bytes': len(encoded.encode())}
++        if args.profile:
++            gc.collect()
++            profile = cProfile.Profile()
++            profile.runcall(run)
++            profile.dump_stats(str(args.output / f'{name}.prof'))
++            with (args.output / f'{name}.profile.txt').open('w') as stream:
++                pstats.Stats(profile, stream=stream).strip_dirs().sort_stats('cumulative').print_stats(50)
++        if args.memory:
++            gc.collect()
++            tracemalloc.start()
++            measured = run()
++            row['peak_traced_bytes'] = tracemalloc.get_traced_memory()[1]
++            tracemalloc.stop()
++            del measured
++        report['workloads'].append(row)
++        (args.output / 'summary.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
++        print(f'{name}: {row["median_s"]:.4f} s [{row["min_s"]:.4f}, {row["max_s"]:.4f}] sha256={digest}', flush=True)
++
++
++if __name__ == '__main__':
++    main()
+--- /dev/null
++++ b/backend/tools/compare_backend_profiles.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python3
++"""Compare benchmark outputs and timings; fail if any complete result differs."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('before', type=Path)
++    parser.add_argument('after', type=Path)
++    args = parser.parse_args()
++    before = json.loads((args.before / 'summary.json').read_text())
++    after = json.loads((args.after / 'summary.json').read_text())
++    if before['environment'] != after['environment'] or before['method'] != after['method']:
++        raise SystemExit('Benchmark environments or workload settings differ.')
++    old = {row['name']: row for row in before['workloads']}
++    new = {row['name']: row for row in after['workloads']}
++    if old.keys() != new.keys():
++        raise SystemExit('Workload sets differ.')
++    print('| Workload | Before, s | After, s | Speedup | Exact output |')
++    print('| --- | ---: | ---: | ---: | --- |')
++    differences = []
++    for name, row in old.items():
++        current = new[name]
++        same = (args.before / f'{name}.json').read_bytes() == (args.after / f'{name}.json').read_bytes()
++        if not same:
++            differences.append(name)
++        print(f'| {name} | {row["median_s"]:.4f} | {current["median_s"]:.4f} | '
++              f'{row["median_s"] / current["median_s"]:.2f}x | {same} |')
++    if differences:
++        raise SystemExit('Results differ: ' + ', '.join(differences))
++
++
++if __name__ == '__main__':
++    main()
+--- a/backend/docs/PERFORMANCE.md
++++ b/backend/docs/PERFORMANCE.md
+@@ -1,59 +1,153 @@
+-# Backend performance profile
++# Профилирование и оптимизация бэкенда — 13 сентября 2026
+ 
+-Profiled on the repository's `01_full_constellation.json` fixture with Python 3.13.5.
+-The workload is the full `SpatialModel -> StaticModel -> DynamicModel` calculation
+-using the reference analysis plan (coverage, routing, N-1 resilience and satellite
+-failure impacts).
++## Результат
+ 
+-## Findings
++Полный кадр API для основной группировки ускорен в 3,37–4,37 раза на двух проверенных моментах времени.
++Расчёт первых трёх динамических кадров ускорен в 4,16 раза. Пик выделений Python на кадре 34 680 с
++снизился с 202,42 до 27,23 МиБ. Все шесть полных сериализованных результатов до и после совпадают побайтно.
+ 
+-The dominant avoidable cost was construction of the same directed NetworkX query
+-graph for every reachability, first-hop, route and resilience query. A single full
+-frame constructed that graph roughly 1,173 times in the original profile.
++Сравнение выполнено **с содержимым загруженного `cosmo_satellite.tar(8).xz`**, в котором уже были
++кэш графов текущего снимка и Edmonds–Karp. Эти прежние изменения не приписываются текущей оптимизации.
++Их исходный отчёт сохранён в `PERFORMANCE-previous.md`. Состояние файлов в архиве отличается от git HEAD;
++использовать HEAD в качестве исходной версии для этих чисел нельзя.
+ 
+-After eliminating those reconstructions, the remaining hotspot was
+-`satellite_connectivity()`. For these relatively small constellation graphs,
+-NetworkX's `edmonds_karp` max-flow backend is materially faster than the default
+-`preflow_push` backend while computing the same minimum cut.
++## Что измерялось
+ 
+-## Changes
++Рабочий API `api_service.app._calculate_snapshot`, включая разбор сценария, пространственную модель,
++полный статический анализ, построение DTO и `model_dump(mode="json")`.
++Использован настоящий `_static_plan`: minimum_hops, minimum_distance, resilient_distance,
++анализ связности, N−1, последствия отказов и ранжирование критичности включены одновременно.
++Выбор primary_route_strategy_id=minimum_hops не отключает вычисление остальных стратегий.
+ 
+-- Cache query graphs inside `NetworkXGraphAlgorithms` for the current immutable
+-  `StaticNetwork` snapshot. The cache is cleared automatically when the dynamic
+-  model advances to a different network snapshot, so memory does not grow with
+-  the number of time samples.
+-- Use `edmonds_karp` for the node-split satellite-connectivity minimum cut.
+-- Remove a redundant `has_path()` pre-check; `minimum_cut()` already yields a zero
+-  cut for disconnected source/sink graphs.
++Динамическая нагрузка создаёт новую модель и рассчитывает сетку [0, 120, 240] с тем же планом,
++агрегацией метрик и преобразованием динамического результата в DTO/словарь JSON.
++HTTP-сокет, gzip, браузер, сеть и готовые ответы транспортного кэша в измерения не входят.
++Текстовая сериализация словаря JSON для контрольной суммы выполняется после остановки таймера.
+ 
+-No public API, routing policy, quality metric, failure semantics or serialized
+-model format was changed.
++Среда: CPython 3.12.3, Linux x86_64, Intel Xeon Platinum 8573C, 9 видимых CPU;
++NetworkX 3.6.1, Pydantic 2.13.5, FastAPI 0.141.1. Расчёты выполнялись последовательно в одном процессе
++на вариант, без параллельных запусков тестов во время итоговых замеров.
++Один прогрев и пять повторов каждого случая, свежая модель на каждый повтор; основной показатель — медиана.
++Сборщик мусора включён, `gc.collect()` вызывается перед каждым повтором вне таймера.
++Это измерения в данной среде, а не обещание такого же времени на другом компьютере.
+ 
+-## Measurements
++## Время
+ 
+-Warm-process wall-clock medians (3 runs each):
++| Нагрузка | До, с | После, с | Ускорение |
++| --- | ---: | ---: | ---: |
++| Полная группировка, 34 680 с | 2.0061 | 0.5958 | 3.37× |
++| Первый запуск, 34 680 с | 0.0273 | 0.0265 | 1.03× |
++| Отказы спутников, 34 680 с | 0.1798 | 0.1835 | 0.98× |
++| Ограничение дальности, 34 680 с | 0.7648 | 0.2985 | 2.56× |
++| Полная группировка, 0 с | 2.3488 | 0.5380 | 4.37× |
++| Динамика: 0, 120, 240 с | 6.5935 | 1.5865 | 4.16× |
+ 
+-| Workload | Original | Optimized | Speedup |
+-| --- | ---: | ---: | ---: |
+-| 1 frame (120 s horizon / 120 s step) | 0.615 s | 0.302 s | 2.04x |
+-| 3 frames (360 s / 120 s) | 1.713 s | 0.857 s | 2.00x |
+-| 10 frames (1200 s / 120 s) | 5.680 s | 3.012 s | 1.89x |
++На «первом запуске» и сценарии отказов заметного ускорения нет: различия около 2–3% при перекрывающихся
++диапазонах повторов. Диапазоны и все исходные повторы сохранены в summary.json; статистическая значимость
++не заявляется. Основной выигрыш получен там, где устойчивые маршруты вызывают много повторных запросов.
++Суточный полный динамический запуск с тремя стратегиями не измерялся; число для него не экстраполировалось.
+ 
+-Full backend test suite:
++## Память
+ 
+-- optimized: completes successfully in 33.54 s;
+-- original: did not complete within a 240 s timeout in the same environment.
++Отдельные прогоны под tracemalloc; значения — пик отслеживаемых выделений Python, **не RSS всего процесса**.
++Тайминги с включённым tracemalloc не используются в таблице времени.
+ 
+-The cProfile call count for the one-frame scenario fell from about 5.59 million
+-to about 2.64 million calls. The original `_query_graph()` cumulative time was
+-about 0.695 s per profiled frame; after snapshot-local caching it no longer
+-appears among the dominant cumulative-time entries.
++| Нагрузка | До, МиБ | После, МиБ |
++| --- | ---: | ---: |
++| Полная группировка, 34 680 с | 202.42 | 27.23 |
++| Первый запуск, 34 680 с | 1.54 | 1.53 |
++| Отказы спутников, 34 680 с | 6.91 | 6.89 |
++| Ограничение дальности, 34 680 с | 69.09 | 13.46 |
++| Полная группировка, 0 с | 201.16 | 19.81 |
++| Динамика: 0, 120, 240 с | 194.94 | 21.74 |
+ 
+-## Remaining hotspot
++## Что показал профиль
+ 
+-The dominant remaining cost is exact per-client/per-satellite node-connectivity
+-analysis. It intentionally performs many minimum-cut calculations because the
+-result is used by failure-impact metrics. Further large gains would require an
+-algorithmic redesign of the all-failures connectivity calculation (rather than
+-memoization or a transport-layer shortcut) and should be validated separately
+-against the exact N-1 semantics.
++Для основной группировки на 34 680 с:
++
++| Работа | До | После |
++| --- | ---: | ---: |
++| Построений `_query_graph` | 3 715 | 287 |
++| Запросов `shortest_path` | 7 339 | 7 339 |
++| Реальных запусков поиска Дейкстры | 7 339 | 3 857 |
++| Расчётов спутниковой связности | 147 | 147 |
++| Вызовов функций в cProfile | 9 620 750 | 3 594 976 |
++
++До оптимизации `_query_graph` занимал около 2,51 с накопленного времени профиля,
++после — 0,18 с. `_path_metrics` сократился с 0,29 до 0,03 с при прежних 6 865 вызовах.
++Профайлер замедляет выполнение; его секунды служат локализации затрат, а не оценкой пользовательской задержки.
++
++## Изменения
++
++1. `backend/src/static_model/networkx_engine.py`: стандартный поиск пути использует общий граф клиента
++   и пропускает исключённые узлы при обходе. Не создаются тысячи полноразмерных графов для запросов
++   с одной и двумя отказавшими вершинами. Исключение источника и цели проверяется до поиска.
++2. Результаты повторных поисков, включая отсутствие пути, кэшируются для точных стандартных типов
++   ClientToGatewayReachability + DistanceCost/HopCountCost. Ключ включает источник, цель, политику,
++   вид стоимости и набор исключений. При смене объекта StaticNetwork весь кэш сбрасывается.
++   Пользовательские политики и подклассы не получают это кэширование путей; для пользовательской
++   достижимости сохраняется построение графа с исключениями до вызовов role.
++3. Объекты политик удерживаются, пока их id используется в ключах кэша: это исключает повторное
++   использование освобождённого id для другого объекта политики.
++4. `backend/src/static_model/routing.py`: индекс рёбер строится один раз на выбор маршрута,
++   затем используется для метрик всех кандидатов и резервных путей. При отсутствии целей индекс не строится.
++
++Сохранены порядок выбора при равных стоимостях (стоимость, переходы, лексикографический путь),
++проверка допустимости пользовательских весов, математические критерии маршрутов и формат результатов.
++Пространственная геометрия, транспорт и frontend не изменялись.
++Кэш остаётся локальным для текущего снимка, без обещания нового режима совместного использования
++одного экземпляра движка несколькими потоками. При большом числе различных запросов в одном снимке
++число записей кэша растёт с числом различных запросов; это не глобальный безразмерный кэш по времени.
++
++Оставшиеся существенные затраты — точные минимальные разрезы для последствий отказов:
++147 расчётов `satellite_connectivity` дают примерно 0,62 с накопленного времени cProfile на этом кадре.
++Их число и алгоритм в этой работе не изменялись.
++
++## Корректность
++
++- Исходная версия: 155 тестов прошли.
++- Итоговая версия: 191 тест прошёл; полные логи приложены.
++- Тесты API охватывают потоковые пакеты и смену фокуса по WebSocket.
++- Существующая интеграционная проверка достижимости проходит все 720 отсчётов каждого из четырёх сценариев.
++- 30 воспроизводимых малых случайных сетей проверяются независимым полным перебором простых путей:
++  нулевые и равные веса, две цели, недоступные вершины, одиночные и парные исключения,
++  повторные обращения к кэшу и запрет транзита через клиентов/шлюзы.
++- Дополнительные проверки: смена снимка A→B→A, кэширование недостижимости,
++  изменяемая пользовательская стоимость/подкласс, отрицательная/NaN/бесконечная стоимость,
++  отсутствие вызовов пользовательской role для исключённых вершин.
++- Все шесть результатов нагрузок совпали полностью, включая пути, связность, оценки отказов,
++  ранжирование и динамические агрегаты. Это проверка конкретных выполненных нагрузок,
++  а не доказательство для всех возможных сценариев.
++
++Два предупреждения pytest относятся к устаревающим интерфейсам установленных Starlette/AnyIO;
++они возникают и на исходной версии.
++
++## Воспроизведение
++
++Из корня оптимизированного проекта, с установленными зависимостями бэкенда:
++
++```bash
++python3 backend/tools/profile_backend.py --repo /path/to/original/cosmo_satellite --output /tmp/cosmo-before --repeats 5 --profile --memory
++python3 backend/tools/profile_backend.py --output /tmp/cosmo-after --repeats 5 --profile --memory
++python3 backend/tools/compare_backend_profiles.py /tmp/cosmo-before /tmp/cosmo-after
++```
++
++Первый --repo должен указывать на распакованный **исходный загруженный архив**, не на HEAD.
++Обе версии запускаются одним интерпретатором и с одними версиями зависимостей.
++Скрипт сравнения проверяет совпадение настроек/среды и байтов всех результатов и завершается с ошибкой при различиях.
++
++Для тестов нужны pytest, httpx и зависимости backend; из каталога backend:
++
++```bash
++python3 -m pytest -ra
++```
++
++В `performance-results/` находятся:
++
++- `before/`: исходный сбор с JSON-результатами, cProfile и отдельными замерами памяти;
++- `before-timing/`: повторные итоговые замеры исходного времени, использованные в таблице;
++- `after/`: итоговые результаты, время, cProfile и память;
++- `baseline-tests.txt`, `optimized-tests.txt`: полные журналы тестов;
++- `optimization.patch`: изменения текущей работы относительно файлов загруженного архива.
++
++Архив содержит проект и историю Git; локальные среды, node_modules и кэши Python не включены.
+--- /dev/null
++++ b/backend/docs/PERFORMANCE-previous.md
+@@ -0,0 +1,59 @@
++# Backend performance profile
++
++Profiled on the repository's `01_full_constellation.json` fixture with Python 3.13.5.
++The workload is the full `SpatialModel -> StaticModel -> DynamicModel` calculation
++using the reference analysis plan (coverage, routing, N-1 resilience and satellite
++failure impacts).
++
++## Findings
++
++The dominant avoidable cost was construction of the same directed NetworkX query
++graph for every reachability, first-hop, route and resilience query. A single full
++frame constructed that graph roughly 1,173 times in the original profile.
++
++After eliminating those reconstructions, the remaining hotspot was
++`satellite_connectivity()`. For these relatively small constellation graphs,
++NetworkX's `edmonds_karp` max-flow backend is materially faster than the default
++`preflow_push` backend while computing the same minimum cut.
++
++## Changes
++
++- Cache query graphs inside `NetworkXGraphAlgorithms` for the current immutable
++  `StaticNetwork` snapshot. The cache is cleared automatically when the dynamic
++  model advances to a different network snapshot, so memory does not grow with
++  the number of time samples.
++- Use `edmonds_karp` for the node-split satellite-connectivity minimum cut.
++- Remove a redundant `has_path()` pre-check; `minimum_cut()` already yields a zero
++  cut for disconnected source/sink graphs.
++
++No public API, routing policy, quality metric, failure semantics or serialized
++model format was changed.
++
++## Measurements
++
++Warm-process wall-clock medians (3 runs each):
++
++| Workload | Original | Optimized | Speedup |
++| --- | ---: | ---: | ---: |
++| 1 frame (120 s horizon / 120 s step) | 0.615 s | 0.302 s | 2.04x |
++| 3 frames (360 s / 120 s) | 1.713 s | 0.857 s | 2.00x |
++| 10 frames (1200 s / 120 s) | 5.680 s | 3.012 s | 1.89x |
++
++Full backend test suite:
++
++- optimized: completes successfully in 33.54 s;
++- original: did not complete within a 240 s timeout in the same environment.
++
++The cProfile call count for the one-frame scenario fell from about 5.59 million
++to about 2.64 million calls. The original `_query_graph()` cumulative time was
++about 0.695 s per profiled frame; after snapshot-local caching it no longer
++appears among the dominant cumulative-time entries.
++
++## Remaining hotspot
++
++The dominant remaining cost is exact per-client/per-satellite node-connectivity
++analysis. It intentionally performs many minimum-cut calculations because the
++result is used by failure-impact metrics. Further large gains would require an
++algorithmic redesign of the all-failures connectivity calculation (rather than
++memoization or a transport-layer shortcut) and should be validated separately
++against the exact N-1 semantics.

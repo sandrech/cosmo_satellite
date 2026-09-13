@@ -1,0 +1,112 @@
+{
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "processor": "",
+    "cpu_count": 5,
+    "dependencies": {
+      "networkx": "3.6.1",
+      "pydantic": "2.13.4",
+      "fastapi": "0.128.2"
+    }
+  },
+  "method": {
+    "repeats": 5,
+    "warmups": 1,
+    "frames": 3,
+    "plan": "api_service.app._static_plan: all 3 strategies, resilience and failure impacts",
+    "timing": "perf_counter, fresh model each iteration; JSON serialization after timing"
+  },
+  "workloads": [
+    {
+      "name": "01_full_constellation-snapshot-34680",
+      "samples_s": [
+        0.5973906570000054,
+        0.6078524299999799,
+        0.5778834689999712,
+        0.5906115969999064,
+        0.6166166519999479
+      ],
+      "median_s": 0.5973906570000054,
+      "min_s": 0.5778834689999712,
+      "max_s": 0.6166166519999479,
+      "output_sha256": "affc1a1d9225354e534cdf1a63e721b6cf34fcb2c056e7926529a81caaaad9d2",
+      "output_bytes": 817505
+    },
+    {
+      "name": "02_first_launch-snapshot-34680",
+      "samples_s": [
+        0.027319889000068542,
+        0.0293227829999978,
+        0.030614389000106712,
+        0.026333672999953706,
+        0.027904993999982253
+      ],
+      "median_s": 0.027904993999982253,
+      "min_s": 0.026333672999953706,
+      "max_s": 0.030614389000106712,
+      "output_sha256": "57111e369d66ba9de2486fbf151a051f079778912ffd1f9984f0233bfb86bd0a",
+      "output_bytes": 56029
+    },
+    {
+      "name": "03_satellite_outages-snapshot-34680",
+      "samples_s": [
+        0.15813570600005278,
+        0.1561930929999562,
+        0.1586085850000245,
+        0.14920275999998012,
+        0.16533175500001107
+      ],
+      "median_s": 0.15813570600005278,
+      "min_s": 0.14920275999998012,
+      "max_s": 0.16533175500001107,
+      "output_sha256": "33565623f8293df023be63911c0c8571c14ab826d6e33cbc6076dfbd1c6a678b",
+      "output_bytes": 116681
+    },
+    {
+      "name": "04_link_range-snapshot-34680",
+      "samples_s": [
+        0.25133034500004214,
+        0.25470658699998694,
+        0.23900197299997217,
+        0.24787911100008841,
+        0.2482686509999894
+      ],
+      "median_s": 0.2482686509999894,
+      "min_s": 0.23900197299997217,
+      "max_s": 0.25470658699998694,
+      "output_sha256": "d38f36076fa00528f6e5f876e5702d18ef20bf684cd49213e228ea8794e70a6b",
+      "output_bytes": 628363
+    },
+    {
+      "name": "01_full_constellation-snapshot-0",
+      "samples_s": [
+        0.5321317909999834,
+        0.5262774749999153,
+        0.5348484959999951,
+        0.5253463249999868,
+        0.5395822250000037
+      ],
+      "median_s": 0.5321317909999834,
+      "min_s": 0.5253463249999868,
+      "max_s": 0.5395822250000037,
+      "output_sha256": "d0de4e2faf253c5b507b7dc7c25cdf1eef9ce285da37e2f909ce69c5e48a1882",
+      "output_bytes": 907666
+    },
+    {
+      "name": "01_full_constellation-dynamic-3",
+      "samples_s": [
+        1.6105780599999662,
+        1.5970304049999413,
+        1.6020692550000604,
+        1.6052737779999688,
+        1.6432428789998994
+      ],
+      "median_s": 1.6052737779999688,
+      "min_s": 1.5970304049999413,
+      "max_s": 1.6432428789998994,
+      "output_sha256": "03d77068afe742b835e3e976dce5dda6a88dc04d857f8323d0c41edd2e7018c3",
+      "output_bytes": 630896
+    }
+  ]
+}
