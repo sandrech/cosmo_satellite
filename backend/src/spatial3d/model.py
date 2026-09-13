@@ -91,45 +91,60 @@ class SpatialModel:
             return Err((SpatialProblem(SpatialProblemCode.INVALID_NUMBER, "time must be finite", ("t_s",)),))
 
         time = float(t_s)
+        spec = self.spec
+        components = self.components
+        body = spec.body
+        limits = spec.links
+        trajectory = self.trajectory
+
         satellite_states: list[SatelliteState] = []
         active_states: list[SatelliteState] = []
-        for satellite in self.spec.satellites:
-            kinematic = self.trajectory.state_at(satellite.id, time)
-            active = self.components.satellite_availability.active(self.spec, satellite, time)
+        satellite_states_append = satellite_states.append
+        active_states_append = active_states.append
+        state_at = trajectory.state_at
+        group_id = trajectory.group_id
+        satellite_active = components.satellite_availability.active
+        for satellite in spec.satellites:
+            kinematic = state_at(satellite.id, time)
+            active = satellite_active(spec, satellite, time)
             state = SatelliteState(
                 id=satellite.id,
-                trajectory_group_id=self.trajectory.group_id(satellite.id),
+                trajectory_group_id=group_id(satellite.id),
                 position=kinematic,
                 active=active,
             )
-            satellite_states.append(state)
+            satellite_states_append(state)
             if active:
-                active_states.append(state)
+                active_states_append(state)
 
         ground_states: list[GroundState] = []
-        for site in self.spec.ground_sites:
-            ground_states.append(
+        ground_states_append = ground_states.append
+        ground_position = components.ground_geometry.position
+        ground_available = components.ground_availability.available
+        for site in spec.ground_sites:
+            ground_states_append(
                 GroundState(
                     id=site.id,
                     name=site.name,
                     role=site.role,
-                    earth_fixed_km=self.components.ground_geometry.position(self.spec.body, site),
-                    available=self.components.ground_availability.available(self.spec, site, time),
+                    earth_fixed_km=ground_position(body, site),
+                    available=ground_available(spec, site, time),
                 )
             )
         ground_by_id = {state.id: state for state in ground_states}
 
         contacts: list[Contact] = []
-        isl_observations = []
-        for left, right in self.components.satellite_pair_candidates.candidates(
-            active_states,
-            body=self.spec.body,
-            limits=self.spec.links,
-        ):
-            observation = self.components.inter_satellite_observation.observe(left, right)
-            isl_observations.append(observation)
-            if self.components.inter_satellite_link.allows(self.spec.body, self.spec.links, observation):
-                contacts.append(
+        isl_observations: list[InterSatelliteObservation] = []
+        contacts_append = contacts.append
+        isl_observations_append = isl_observations.append
+        observe_isl = components.inter_satellite_observation.observe
+        allow_isl = components.inter_satellite_link.allows
+        pair_candidates = components.satellite_pair_candidates.candidates
+        for left, right in pair_candidates(active_states, body=body, limits=limits):
+            observation = observe_isl(left, right)
+            isl_observations_append(observation)
+            if allow_isl(body, limits, observation):
+                contacts_append(
                     Contact(
                         observation.a,
                         observation.b,
@@ -138,22 +153,30 @@ class SpatialModel:
                     )
                 )
 
-        ground_observations = []
+        ground_observations: list[GroundObservation] = []
         visibility: list[GroundVisibility] = []
-        for site in self.spec.ground_sites:
+        ground_observations_append = ground_observations.append
+        visibility_append = visibility.append
+        observe_ground = components.ground_observation.observe
+        visible_ground = components.ground_visibility.visible
+        allow_ground = components.ground_link.allows
+        for site in spec.ground_sites:
             ground_state = ground_by_id[site.id]
+            ground_position_km = ground_state.earth_fixed_km
+            ground_state_available = ground_state.available
+            site_id = site.id
             for satellite_state in active_states:
-                observation = self.components.ground_observation.observe(
-                    self.spec.body,
-                    ground_state.earth_fixed_km,
+                observation = observe_ground(
+                    body,
+                    ground_position_km,
                     satellite_state.position.earth_fixed_km,
-                    ground_id=site.id,
+                    ground_id=site_id,
                     satellite_id=satellite_state.id,
                 )
-                ground_observations.append(observation)
-                visible = self.components.ground_visibility.visible(self.spec.links, observation)
+                ground_observations_append(observation)
+                visible = visible_ground(limits, observation)
                 if visible:
-                    visibility.append(
+                    visibility_append(
                         GroundVisibility(
                             observation.ground_id,
                             observation.satellite_id,
@@ -161,17 +184,12 @@ class SpatialModel:
                             observation.distance_km,
                         )
                     )
-                if (
-                    ground_state.available
-                    and self.components.ground_link.allows(
-                        self.spec.links,
-                        observation,
-                        geometrically_visible=visible,
-                    )
+                if ground_state_available and allow_ground(
+                    limits, observation, geometrically_visible=visible
                 ):
-                    contacts.append(
+                    contacts_append(
                         Contact(
-                            site.id,
+                            site_id,
                             satellite_state.id,
                             observation.distance_km,
                             ContactKind.GROUND_SATELLITE,
@@ -181,7 +199,7 @@ class SpatialModel:
         return Ok(
             SpatialSnapshot(
                 t_s=time,
-                reference_frame=ReferenceFrame(CoordinateFrame.EARTH_FIXED, self.spec.body.radius_km),
+                reference_frame=ReferenceFrame(CoordinateFrame.EARTH_FIXED, body.radius_km),
                 satellites=tuple(satellite_states),
                 ground_sites=tuple(ground_states),
                 contacts=tuple(contacts),

@@ -1,0 +1,1447 @@
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/dynamic_model/model.py backend/src/dynamic_model/model.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/dynamic_model/model.py	2026-09-12 21:55:54.000000000 +0000
++++ backend/src/dynamic_model/model.py	2026-09-13 13:46:12.595198070 +0000
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from collections import Counter, defaultdict
+ from collections.abc import Iterator
+ import math
+@@ -67,6 +67,12 @@
+     static_components: StaticComponents
+     static_plan: StaticAnalysisPlan
+     components: DynamicComponents
++    _availability_cache: dict[tuple[bool, ...], AvailabilityStatistics] = field(
++        default_factory=dict, init=False, repr=False, compare=False, hash=False
++    )
++    _numeric_cache: dict[tuple[float, ...], NumericStatistics] = field(
++        default_factory=dict, init=False, repr=False, compare=False, hash=False
++    )
+ 
+     @classmethod
+     def create(
+@@ -483,21 +489,24 @@
+             for satellite_id in impacts
+         }))
+         strategy_ids = tuple(strategy.id for strategy in self.static_plan.route_strategies)
++        active_counts = Counter(
++            satellite.id
++            for frame in frames
++            for satellite in frame.spatial.satellites
++            if satellite.active
++        )
++        route_summary_cache: dict[tuple[int, ...], tuple[AvailabilityStatistics, int]] = {}
++        quality_relation_cache: dict[
++            tuple[PreferenceRelation, ...], QualityRelationStatistics
++        ] = {}
+ 
+         result: list[SatelliteTemporalCriticality] = []
+         for satellite_id in satellite_ids:
+-            active_sample_count = sum(
+-                any(satellite.id == satellite_id and satellite.active for satellite in frame.spatial.satellites)
+-                for frame in frames
+-            )
++            active_sample_count = active_counts[satellite_id]
+             evaluated_count = sum(satellite_id in impacts for impacts in impacts_by_frame)
+             per_client: list[ClientSatelliteTemporalImpact] = []
+ 
+             for client_id, baseline_dynamic in client_by_id.items():
+-                baseline_reachable = tuple(
+-                    static_clients[client_id].service.reachable
+-                    for static_clients in static_clients_by_frame
+-                )
+                 counterfactual_reachable: list[bool] = []
+                 geometric_visibility_loss_samples = 0
+                 visible_contact_loss = 0
+@@ -556,24 +565,35 @@
+                     baseline_routes = baseline_dynamic.routing.for_strategy(strategy_id)
+                     if baseline_routes is None:
+                         raise ValueError(f"missing baseline route strategy {strategy_id!r}")
+-                    counterfactual_routes_analysis = self._route_temporal_analysis(
+-                        strategy_id,
+-                        tuple(counterfactual_routes[strategy_id]),
++                    route_trace = tuple(counterfactual_routes[strategy_id])
++                    route_trace_key = tuple(
++                        0 if item.route is None else id(item.route)
++                        for item in route_trace
+                     )
++                    route_summary = route_summary_cache.get(route_trace_key)
++                    if route_summary is None:
++                        route_summary = self._route_availability_and_switch_count(route_trace)
++                        route_summary_cache[route_trace_key] = route_summary
++                    counterfactual_availability, counterfactual_switch_count = route_summary
++                    relations = tuple(quality_relations[strategy_id])
++                    relation_statistics = quality_relation_cache.get(relations)
++                    if relation_statistics is None:
++                        relation_statistics = self._quality_relation_statistics(relations)
++                        quality_relation_cache[relations] = relation_statistics
+                     route_impacts_list.append(RouteStrategyFailureTemporalImpact(
+                         strategy_id=strategy_id,
+                         baseline_availability=baseline_routes.availability,
+-                        counterfactual_availability=counterfactual_routes_analysis.availability,
++                        counterfactual_availability=counterfactual_availability,
+                         baseline_switch_count=baseline_routes.switch_count,
+-                        counterfactual_switch_count=counterfactual_routes_analysis.switch_count,
++                        counterfactual_switch_count=counterfactual_switch_count,
+                         switch_count_delta=(
+-                            counterfactual_routes_analysis.switch_count - baseline_routes.switch_count
++                            counterfactual_switch_count - baseline_routes.switch_count
+                         ),
+                         route_lost_samples=route_lost[strategy_id],
+                         route_lost_s=route_lost[strategy_id] * self.grid.step_s,
+                         path_changed_samples=route_changed[strategy_id],
+                         path_changed_s=route_changed[strategy_id] * self.grid.step_s,
+-                        quality_changes=self._quality_relation_statistics(tuple(quality_relations[strategy_id])),
++                        quality_changes=relation_statistics,
+                     ))
+                 route_impacts = tuple(route_impacts_list)
+ 
+@@ -647,6 +667,24 @@
+ 
+         return tuple(result)
+ 
++    def _route_availability_and_switch_count(
++        self,
++        route_samples: tuple[RouteTimeSample, ...],
++    ) -> tuple[AvailabilityStatistics, int]:
++        availability = self._availability(tuple(item.route is not None for item in route_samples))
++        current_route: Route | None = None
++        switch_count = 0
++        for item in route_samples:
++            route = item.route
++            if route is None:
++                current_route = None
++            elif current_route is None:
++                current_route = route
++            elif not self.components.route_identity.same_route(current_route, route):
++                switch_count += 1
++                current_route = route
++        return availability, switch_count
++
+     @staticmethod
+     def _client_failure_impact(impact, client_id: str) -> ClientFailureImpact | None:
+         if impact is None:
+@@ -656,16 +694,21 @@
+     def _availability(self, available: tuple[bool, ...]) -> AvailabilityStatistics:
+         if len(available) != self.grid.sample_count:
+             raise ValueError("availability series length does not match the time grid")
++        cached = self._availability_cache.get(available)
++        if cached is not None:
++            return cached
+         available_count = sum(available)
+         available_intervals = self._boolean_intervals(available, expected=True)
+         unavailable_intervals = self._boolean_intervals(available, expected=False)
+-        return AvailabilityStatistics(
++        result = AvailabilityStatistics(
+             sample_count=len(available),
+             available_sample_count=available_count,
+             fraction=available_count / len(available),
+             available=self._interval_statistics(available_intervals),
+             unavailable=self._interval_statistics(unavailable_intervals),
+         )
++        self._availability_cache[available] = result
++        return result
+ 
+     @staticmethod
+     def _interval_statistics(intervals: tuple[TimeInterval, ...]) -> IntervalStatistics:
+@@ -697,15 +740,20 @@
+             intervals.append(TimeInterval(start, self.grid.end_s))
+         return tuple(intervals)
+ 
+-    @staticmethod
+-    def _numeric(values: tuple[float, ...]) -> NumericStatistics:
++    def _numeric(self, values: tuple[float, ...]) -> NumericStatistics:
++        cached = self._numeric_cache.get(values)
++        if cached is not None:
++            return cached
+         if not values:
+-            return NumericStatistics(0, None, None, None)
+-        if any(not math.isfinite(value) for value in values):
+-            raise ValueError("numeric temporal metric contains a non-finite value")
+-        return NumericStatistics(
+-            sample_count=len(values),
+-            minimum=min(values),
+-            maximum=max(values),
+-            mean=sum(values) / len(values),
+-        )
++            result = NumericStatistics(0, None, None, None)
++        else:
++            if any(not math.isfinite(value) for value in values):
++                raise ValueError("numeric temporal metric contains a non-finite value")
++            result = NumericStatistics(
++                sample_count=len(values),
++                minimum=min(values),
++                maximum=max(values),
++                mean=sum(values) / len(values),
++            )
++        self._numeric_cache[values] = result
++        return result
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/frontend_json/adapters.py backend/src/frontend_json/adapters.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/frontend_json/adapters.py	2026-09-12 20:26:33.000000000 +0000
++++ backend/src/frontend_json/adapters.py	2026-09-13 13:40:13.289272397 +0000
+@@ -203,8 +203,12 @@
+     )
+ 
+ 
+-def _route_to_dto(route: Route) -> RouteDto:
+-    return RouteDto(
++def _route_to_dto(route: Route, cache: dict[int, RouteDto] | None = None) -> RouteDto:
++    cache_key = id(route)
++    if cache is not None and (cached := cache.get(cache_key)) is not None:
++        return cached
++
++    dto = RouteDto(
+         strategy_id=route.strategy_id,
+         source_id=route.source_id,
+         target_id=route.target_id,
+@@ -232,6 +236,9 @@
+             for item in route.quality.dimensions
+         ]),
+     )
++    if cache is not None:
++        cache[cache_key] = dto
++    return dto
+ 
+ 
+ def _route_from_dto(dto: RouteDto) -> Route:
+@@ -265,10 +272,16 @@
+     )
+ 
+ 
+-def _routing_to_dto(value: RoutingState) -> RoutingStateDto:
++def _routing_to_dto(
++    value: RoutingState,
++    route_cache: dict[int, RouteDto] | None = None,
++) -> RoutingStateDto:
+     return RoutingStateDto(
+-        selected_route=None if value.selected_route is None else _route_to_dto(value.selected_route),
+-        routes=[_route_to_dto(route) for route in value.routes],
++        selected_route=(
++            None if value.selected_route is None
++            else _route_to_dto(value.selected_route, route_cache)
++        ),
++        routes=[_route_to_dto(route, route_cache) for route in value.routes],
+     )
+ 
+ 
+@@ -278,7 +291,10 @@
+     return RoutingState(selected, routes)
+ 
+ 
+-def _client_to_dto(value: ClientSnapshotAnalysis) -> ClientSnapshotAnalysisDto:
++def _client_to_dto(
++    value: ClientSnapshotAnalysis,
++    route_cache: dict[int, RouteDto] | None = None,
++) -> ClientSnapshotAnalysisDto:
+     resilience = None
+     if value.resilience is not None:
+         resilience = ResilienceStateDto(
+@@ -301,7 +317,7 @@
+             reachable_gateways=list(value.service.reachable_gateways),
+             no_route_reason=None if value.service.no_route_reason is None else value.service.no_route_reason.value,
+         ),
+-        routing=_routing_to_dto(value.routing),
++        routing=_routing_to_dto(value.routing, route_cache),
+         resilience=resilience,
+     )
+ 
+@@ -331,11 +347,14 @@
+     )
+ 
+ 
+-def _delta_to_dto(value: RouteFailureDelta) -> RouteFailureDeltaDto:
++def _delta_to_dto(
++    value: RouteFailureDelta,
++    route_cache: dict[int, RouteDto] | None = None,
++) -> RouteFailureDeltaDto:
+     return RouteFailureDeltaDto(
+         strategy_id=value.strategy_id,
+-        before=None if value.before is None else _route_to_dto(value.before),
+-        after=None if value.after is None else _route_to_dto(value.after),
++        before=None if value.before is None else _route_to_dto(value.before, route_cache),
++        after=None if value.after is None else _route_to_dto(value.after, route_cache),
+         route_lost=value.route_lost,
+         path_changed=value.path_changed,
+         quality_change=None if value.quality_change is None else value.quality_change.value,
+@@ -351,7 +370,10 @@
+     )
+ 
+ 
+-def _impact_to_dto(value: SatelliteFailureImpact) -> SatelliteFailureImpactDto:
++def _impact_to_dto(
++    value: SatelliteFailureImpact,
++    route_cache: dict[int, RouteDto] | None = None,
++) -> SatelliteFailureImpactDto:
+     clients = [
+         ClientFailureImpactDto(
+             client_id=item.client_id,
+@@ -361,7 +383,7 @@
+             valid_ingress_lost=item.valid_ingress_lost,
+             reachable_gateways_lost=item.reachable_gateways_lost,
+             satellite_connectivity_loss=item.satellite_connectivity_loss,
+-            route_deltas=[_delta_to_dto(delta) for delta in item.route_deltas],
++            route_deltas=[_delta_to_dto(delta, route_cache) for delta in item.route_deltas],
+         )
+         for item in value.clients
+     ]
+@@ -401,6 +423,7 @@
+ 
+ 
+ def static_analysis_to_dto(value: StaticAnalysis) -> StaticAnalysisDto:
++    route_cache: dict[int, RouteDto] = {}
+     return StaticAnalysisDto(
+         summary=NetworkSummaryDto(
+             node_count=value.summary.node_count,
+@@ -412,8 +435,10 @@
+             reachable_client_count=value.summary.reachable_client_count,
+             all_clients_reachable=value.summary.all_clients_reachable,
+         ),
+-        clients=[_client_to_dto(client) for client in value.clients],
+-        satellite_failure_impacts=[_impact_to_dto(impact) for impact in value.satellite_failure_impacts],
++        clients=[_client_to_dto(client, route_cache) for client in value.clients],
++        satellite_failure_impacts=[
++            _impact_to_dto(impact, route_cache) for impact in value.satellite_failure_impacts
++        ],
+         satellite_criticality_ranking=[
+             RankedSatelliteImpactDto(rank=item.rank, satellite_id=item.impact.satellite_id)
+             for item in value.satellite_criticality_ranking
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/frontend_json/dynamic_adapters.py backend/src/frontend_json/dynamic_adapters.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/frontend_json/dynamic_adapters.py	2026-09-12 20:26:33.000000000 +0000
++++ backend/src/frontend_json/dynamic_adapters.py	2026-09-13 13:46:58.183225124 +0000
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ 
++from dataclasses import dataclass, field
++
+ from dynamic_model import (
+     AvailabilityStatistics,
+     DynamicAnalysis,
+@@ -42,8 +44,23 @@
+ )
+ 
+ 
+-def _intervals(value: IntervalStatistics) -> IntervalStatisticsDto:
+-    return IntervalStatisticsDto(
++@dataclass(slots=True)
++class _DtoCaches:
++    intervals: dict[int, IntervalStatisticsDto] = field(default_factory=dict)
++    availability: dict[int, AvailabilityStatisticsDto] = field(default_factory=dict)
++    numeric: dict[int, NumericStatisticsDto] = field(default_factory=dict)
++    relations: dict[int, QualityRelationStatisticsDto] = field(default_factory=dict)
++    routes: dict[int, object] = field(default_factory=dict)
++
++
++def _intervals(
++    value: IntervalStatistics,
++    cache: _DtoCaches | None = None,
++) -> IntervalStatisticsDto:
++    key = id(value)
++    if cache is not None and (cached := cache.intervals.get(key)) is not None:
++        return cached
++    result = IntervalStatisticsDto(
+         intervals=[
+             TimeIntervalDto(start_s=item.start_s, end_s=item.end_s, duration_s=item.duration_s)
+             for item in value.intervals
+@@ -53,46 +70,80 @@
+         average_s=value.average_s,
+         count=value.count,
+     )
++    if cache is not None:
++        cache.intervals[key] = result
++    return result
+ 
+ 
+-def _availability(value: AvailabilityStatistics) -> AvailabilityStatisticsDto:
+-    return AvailabilityStatisticsDto(
++def _availability(
++    value: AvailabilityStatistics,
++    cache: _DtoCaches | None = None,
++) -> AvailabilityStatisticsDto:
++    key = id(value)
++    if cache is not None and (cached := cache.availability.get(key)) is not None:
++        return cached
++    result = AvailabilityStatisticsDto(
+         sample_count=value.sample_count,
+         available_sample_count=value.available_sample_count,
+         fraction=value.fraction,
+-        available=_intervals(value.available),
+-        unavailable=_intervals(value.unavailable),
++        available=_intervals(value.available, cache),
++        unavailable=_intervals(value.unavailable, cache),
+     )
++    if cache is not None:
++        cache.availability[key] = result
++    return result
+ 
+ 
+-def _numeric(value: NumericStatistics) -> NumericStatisticsDto:
+-    return NumericStatisticsDto(
++def _numeric(
++    value: NumericStatistics,
++    cache: _DtoCaches | None = None,
++) -> NumericStatisticsDto:
++    key = id(value)
++    if cache is not None and (cached := cache.numeric.get(key)) is not None:
++        return cached
++    result = NumericStatisticsDto(
+         sample_count=value.sample_count,
+         minimum=value.minimum,
+         maximum=value.maximum,
+         mean=value.mean,
+     )
++    if cache is not None:
++        cache.numeric[key] = result
++    return result
+ 
+ 
+-def _quality_dimension(value: QualityDimensionStatistics) -> QualityDimensionStatisticsDto:
++def _quality_dimension(
++    value: QualityDimensionStatistics,
++    cache: _DtoCaches | None = None,
++) -> QualityDimensionStatisticsDto:
+     return QualityDimensionStatisticsDto(
+         name=value.name,
+         direction=value.direction.value,
+-        values=_numeric(value.values),
++        values=_numeric(value.values, cache),
+     )
+ 
+ 
+-def _quality_relations(value: QualityRelationStatistics) -> QualityRelationStatisticsDto:
+-    return QualityRelationStatisticsDto(
++def _quality_relations(
++    value: QualityRelationStatistics,
++    cache: _DtoCaches | None = None,
++) -> QualityRelationStatisticsDto:
++    key = id(value)
++    if cache is not None and (cached := cache.relations.get(key)) is not None:
++        return cached
++    result = QualityRelationStatisticsDto(
+         sample_count=value.sample_count,
+         better_count=value.better_count,
+         equal_count=value.equal_count,
+         worse_count=value.worse_count,
+         incomparable_count=value.incomparable_count,
+     )
++    if cache is not None:
++        cache.relations[key] = result
++    return result
+ 
+ 
+ def dynamic_analysis_to_dto(value: DynamicAnalysis) -> DynamicAnalysisDto:
++    cache = _DtoCaches()
+     clients = []
+     for client in value.clients:
+         route_strategies = []
+@@ -102,11 +153,11 @@
+                 samples=[
+                     RouteTimeSampleDto(
+                         t_s=item.t_s,
+-                        route=None if item.route is None else _route_to_dto(item.route),
++                        route=None if item.route is None else _route_to_dto(item.route, cache.routes),
+                     )
+                     for item in strategy.samples
+                 ],
+-                availability=_availability(strategy.availability),
++                availability=_availability(strategy.availability, cache),
+                 episodes=[
+                     RouteEpisodeDto(
+                         strategy_id=item.strategy_id,
+@@ -128,20 +179,22 @@
+                     for item in strategy.switches
+                 ],
+                 switch_count=strategy.switch_count,
+-                hop_count=_numeric(strategy.hop_count),
+-                total_distance_km=_numeric(strategy.total_distance_km),
+-                quality_dimensions=[_quality_dimension(item) for item in strategy.quality_dimensions],
++                hop_count=_numeric(strategy.hop_count, cache),
++                total_distance_km=_numeric(strategy.total_distance_km, cache),
++                quality_dimensions=[_quality_dimension(item, cache) for item in strategy.quality_dimensions],
+             ))
+ 
+         clients.append(ClientDynamicAnalysisDto(
+             client_id=client.client_id,
+             samples=[
+-                ClientTimeSampleDto(t_s=item.t_s, analysis=_client_to_dto(item.analysis))
++                ClientTimeSampleDto(
++                    t_s=item.t_s, analysis=_client_to_dto(item.analysis, cache.routes)
++                )
+                 for item in client.samples
+             ],
+-            coverage=DynamicCoverageAnalysisDto(visibility=_availability(client.coverage.visibility)),
++            coverage=DynamicCoverageAnalysisDto(visibility=_availability(client.coverage.visibility, cache)),
+             service=DynamicServiceAnalysisDto(
+-                availability=_availability(client.service.availability),
++                availability=_availability(client.service.availability, cache),
+                 target=TargetAssessmentDto(
+                     target_fraction=client.service.target.target_fraction,
+                     achieved_fraction=client.service.target.achieved_fraction,
+@@ -163,8 +216,8 @@
+                 strategies=route_strategies,
+             ),
+             resilience=DynamicResilienceAnalysisDto(
+-                satellite_connectivity=_numeric(client.resilience.satellite_connectivity),
+-                n_minus_one=_availability(client.resilience.n_minus_one),
++                satellite_connectivity=_numeric(client.resilience.satellite_connectivity, cache),
++                n_minus_one=_availability(client.resilience.n_minus_one, cache),
+                 critical_satellites=[
+                     CriticalSatelliteOccurrenceDto(
+                         satellite_id=item.satellite_id,
+@@ -183,8 +236,8 @@
+         for item in satellite.clients:
+             client_impacts.append(ClientSatelliteTemporalImpactDto(
+                 client_id=item.client_id,
+-                baseline_service=_availability(item.baseline_service),
+-                counterfactual_service=_availability(item.counterfactual_service),
++                baseline_service=_availability(item.baseline_service, cache),
++                counterfactual_service=_availability(item.counterfactual_service, cache),
+                 availability_loss=item.availability_loss,
+                 additional_outage_s=item.additional_outage_s,
+                 maximum_outage_increase_s=item.maximum_outage_increase_s,
+@@ -199,8 +252,8 @@
+                 route_impacts=[
+                     RouteStrategyFailureTemporalImpactDto(
+                         strategy_id=route.strategy_id,
+-                        baseline_availability=_availability(route.baseline_availability),
+-                        counterfactual_availability=_availability(route.counterfactual_availability),
++                        baseline_availability=_availability(route.baseline_availability, cache),
++                        counterfactual_availability=_availability(route.counterfactual_availability, cache),
+                         baseline_switch_count=route.baseline_switch_count,
+                         counterfactual_switch_count=route.counterfactual_switch_count,
+                         switch_count_delta=route.switch_count_delta,
+@@ -208,7 +261,7 @@
+                         route_lost_s=route.route_lost_s,
+                         path_changed_samples=route.path_changed_samples,
+                         path_changed_s=route.path_changed_s,
+-                        quality_changes=_quality_relations(route.quality_changes),
++                        quality_changes=_quality_relations(route.quality_changes, cache),
+                     )
+                     for route in item.route_impacts
+                 ],
+@@ -245,8 +298,8 @@
+         target_availability=value.target_availability,
+         summary=DynamicNetworkSummaryDto(
+             sample_count=value.summary.sample_count,
+-            all_clients_visible=_availability(value.summary.all_clients_visible),
+-            all_clients_reachable=_availability(value.summary.all_clients_reachable),
++            all_clients_visible=_availability(value.summary.all_clients_visible, cache),
++            all_clients_reachable=_availability(value.summary.all_clients_reachable, cache),
+         ),
+         clients=clients,
+         satellite_criticality=criticality,
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/model.py backend/src/static_model/model.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/model.py	2026-09-13 12:39:57.000000000 +0000
++++ backend/src/static_model/model.py	2026-09-13 13:45:16.336825993 +0000
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from .analysis import (
+     ClientFailureImpact,
+     ClientSnapshotAnalysis,
+@@ -65,6 +65,9 @@
+     network: StaticNetwork
+     components: StaticComponents
+     plan: StaticAnalysisPlan
++    _route_cache: dict[tuple[str, tuple[str, ...], RouteQuality], Route] = field(
++        default_factory=dict, init=False, repr=False, compare=False, hash=False
++    )
+ 
+     @classmethod
+     def create(
+@@ -176,8 +179,7 @@
+                 f"unknown route strategy {strategy_id!r}",
+                 ("strategy_id",),
+             ),))
+-        nodes = {node.id: node for node in self.network.nodes}
+-        target = nodes.get(target_id)
++        target = self.network._nodes_by_id.get(target_id)
+         if target is None or self.components.reachability.role(target, source_id) != TraversalRole.TARGET:
+             return Err((StaticProblem(
+                 StaticProblemCode.INVALID_QUERY,
+@@ -294,7 +296,11 @@
+         routes = tuple(
+             route
+             for strategy in self.plan.route_strategies
+-            if (route := self._select_route(source_id, strategy, excluded_nodes)) is not None
++            if (
++                route := self._select_route(
++                    source_id, strategy, excluded_nodes, target_ids=targets
++                )
++            ) is not None
+         )
+         selected_route = next(
+             (route for route in routes if route.strategy_id == self.plan.primary_route_strategy_id),
+@@ -395,13 +401,17 @@
+         source_id: str,
+         strategy: RoutingStrategy,
+         excluded_nodes: frozenset[str],
++        *,
++        target_ids: tuple[str, ...] | None = None,
+     ) -> Route | None:
+-        targets = self.components.graph_algorithms.reachable_targets(
+-            self.network,
+-            source_id,
+-            self.components.reachability,
+-            excluded_nodes,
+-        )
++        targets = target_ids
++        if targets is None:
++            targets = self.components.graph_algorithms.reachable_targets(
++                self.network,
++                source_id,
++                self.components.reachability,
++                excluded_nodes,
++            )
+         selected = strategy.select_path(
+             self.network,
+             source_id,
+@@ -417,11 +427,16 @@
+         return self._route_from_nodes(path, strategy.id, quality)
+ 
+     def _route_from_nodes(self, path: tuple[str, ...], strategy_id: str, quality: RouteQuality) -> Route:
+-        links = {frozenset((link.a, link.b)): link for link in self.network.links}
++        cache_key = (strategy_id, path, quality)
++        cached = self._route_cache.get(cache_key)
++        if cached is not None:
++            return cached
++
++        links = self.network._links_by_pair
+         segments: list[RouteSegment] = []
+         distance = 0.0
+         for left, right in zip(path, path[1:]):
+-            link = links[frozenset((left, right))]
++            link = links[(left, right)]
+             distance += link.distance_km
+             segments.append(RouteSegment(
+                 from_id=left,
+@@ -430,7 +445,7 @@
+                 distance_km=link.distance_km,
+                 elevation_deg=link.elevation_deg,
+             ))
+-        return Route(
++        route = Route(
+             strategy_id=strategy_id,
+             source_id=path[0],
+             target_id=path[-1],
+@@ -439,6 +454,8 @@
+             metrics=RouteMetrics(max(0, len(path) - 1), distance),
+             quality=quality,
+         )
++        self._route_cache[cache_key] = route
++        return route
+ 
+     @staticmethod
+     def _route_failure_delta(strategy: RoutingStrategy, before: Route | None, after: Route | None) -> RouteFailureDelta:
+@@ -451,7 +468,7 @@
+         return next((strategy for strategy in self.plan.route_strategies if strategy.id == strategy_id), None)
+ 
+     def _validate_source(self, source_id: str) -> Result[None, StaticProblems]:
+-        node = next((node for node in self.network.nodes if node.id == source_id), None)
++        node = self.network._nodes_by_id.get(source_id)
+         if node is None:
+             return Err((StaticProblem(
+                 StaticProblemCode.INVALID_QUERY,
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/networkx_engine.py backend/src/static_model/networkx_engine.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/networkx_engine.py	2026-09-13 12:36:41.000000000 +0000
++++ backend/src/static_model/networkx_engine.py	2026-09-13 13:41:51.388723048 +0000
+@@ -16,6 +16,7 @@
+ class _ConnectivityEntry:
+     result: SatelliteConnectivity
+     flow_satellites: frozenset[str]
++    single_failure_cuts: dict[str, tuple[str, ...]] = field(default_factory=dict)
+ 
+ 
+ @dataclass(slots=True)
+@@ -42,6 +43,18 @@
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
+ 
+     _policies: dict[int, ReachabilityPolicy] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _reachable_targets_cache: dict[
++        tuple[str, int, frozenset[str]], tuple[str, ...],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _reachable_witness_cache: dict[
++        tuple[str, int, frozenset[str]], dict[str, frozenset[str]],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _viable_first_hops_cache: dict[
++        tuple[str, int, frozenset[str]], tuple[str, ...],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
++    _first_hop_witness_cache: dict[
++        tuple[str, int, frozenset[str]], dict[str, frozenset[str]],
++    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+     _shortest_path_cache: dict[
+         tuple[str, str, int, type, frozenset[str]], tuple[str, ...] | None,
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
+@@ -52,6 +65,21 @@
+         tuple[str, int, str, type], dict[str, float],
+     ] = field(default_factory=dict, init=False, repr=False, compare=False)
+ 
++    def _ensure_network(self, network: StaticNetwork) -> None:
++        if self._cached_network is network:
++            return
++        self._cached_network = network
++        self._query_graph_cache.clear()
++        self._adjacency_cache.clear()
++        self._reachable_targets_cache.clear()
++        self._reachable_witness_cache.clear()
++        self._viable_first_hops_cache.clear()
++        self._first_hop_witness_cache.clear()
++        self._shortest_path_cache.clear()
++        self._connectivity_cache.clear()
++        self._heuristic_cache.clear()
++        self._policies.clear()
++
+     def _graph(
+         self,
+         network: StaticNetwork,
+@@ -59,15 +87,7 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str],
+     ) -> tuple[nx.DiGraph, dict[str, TraversalRole]]:
+-        if self._cached_network is not network:
+-            self._cached_network = network
+-            self._query_graph_cache.clear()
+-            self._adjacency_cache.clear()
+-            self._shortest_path_cache.clear()
+-            self._connectivity_cache.clear()
+-            self._heuristic_cache.clear()
+-            self._policies.clear()
+-
++        self._ensure_network(network)
+         # Retain the object for as long as its identity is used as a cache key.
+         self._policies[id(policy)] = policy
+         key = (source_id, id(policy), excluded_nodes)
+@@ -118,37 +138,87 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...]:
++        self._ensure_network(network)
++        key = (source_id, id(policy), excluded_nodes)
++        cached = self._reachable_targets_cache.get(key)
++        if cached is not None:
++            return cached
++
+         if type(policy) is ClientToGatewayReachability:
+             graph, roles = self._graph(network, source_id, policy, frozenset())
++            witnesses: dict[str, frozenset[str]] = {}
+             if (
+                 source_id in excluded_nodes
+                 or source_id not in graph
+                 or roles.get(source_id) != TraversalRole.SOURCE
+             ):
+-                return ()
+-            adjacency, _ = self._adjacency(network, source_id, policy, frozenset())
+-            seen = {source_id}
+-            stack = [source_id]
+-            while stack:
+-                node_id = stack.pop()
+-                for neighbor, _ in adjacency[node_id]:
+-                    if neighbor in excluded_nodes or neighbor in seen:
+-                        continue
+-                    seen.add(neighbor)
+-                    stack.append(neighbor)
+-            return tuple(sorted(
+-                node_id
+-                for node_id in seen
+-                if node_id != source_id
+-                and roles[node_id] == TraversalRole.TARGET
+-                and node_id not in excluded_nodes
+-            ))
++                result = ()
++            else:
++                # Reachability only decreases under vertex deletion.  Reuse a
++                # parent result when one stored witness path for every remaining
++                # target avoids the newly excluded vertex.
++                reused = False
++                if excluded_nodes:
++                    for added_exclusion in excluded_nodes:
++                        parent_excluded = excluded_nodes - frozenset((added_exclusion,))
++                        parent_key = (source_id, id(policy), parent_excluded)
++                        parent_result = self._reachable_targets_cache.get(parent_key)
++                        parent_witnesses = self._reachable_witness_cache.get(parent_key)
++                        if parent_result is None or parent_witnesses is None:
++                            continue
++                        remaining = tuple(
++                            target for target in parent_result if target != added_exclusion
++                        )
++                        if not all(
++                            added_exclusion not in parent_witnesses[target]
++                            for target in remaining
++                        ):
++                            continue
++                        result = remaining
++                        witnesses = {target: parent_witnesses[target] for target in remaining}
++                        reused = True
++                        break
++
++                if not reused:
++                    adjacency, _ = self._adjacency(network, source_id, policy, frozenset())
++                    seen = {source_id}
++                    parent: dict[str, str] = {}
++                    stack = [source_id]
++                    while stack:
++                        node_id = stack.pop()
++                        for neighbor, _ in adjacency[node_id]:
++                            if neighbor in excluded_nodes or neighbor in seen:
++                                continue
++                            seen.add(neighbor)
++                            parent[neighbor] = node_id
++                            stack.append(neighbor)
++                    result = tuple(sorted(
++                        node_id
++                        for node_id in seen
++                        if node_id != source_id
++                        and roles[node_id] == TraversalRole.TARGET
++                        and node_id not in excluded_nodes
++                    ))
++                    for target in result:
++                        path_nodes = {target}
++                        current = target
++                        while current != source_id:
++                            current = parent[current]
++                            path_nodes.add(current)
++                        witnesses[target] = frozenset(path_nodes)
++            self._reachable_witness_cache[key] = witnesses
++        else:
++            graph, roles = self._graph(network, source_id, policy, excluded_nodes)
++            if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
++                result = ()
++            else:
++                reachable = nx.descendants(graph, source_id)
++                result = tuple(sorted(
++                    node_id for node_id in reachable if roles[node_id] == TraversalRole.TARGET
++                ))
+ 
+-        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+-        if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
+-            return ()
+-        reachable = nx.descendants(graph, source_id)
+-        return tuple(sorted(node_id for node_id in reachable if roles[node_id] == TraversalRole.TARGET))
++        self._reachable_targets_cache[key] = result
++        return result
+ 
+     def viable_first_hops(
+         self,
+@@ -157,48 +227,97 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...]:
++        self._ensure_network(network)
++        key = (source_id, id(policy), excluded_nodes)
++        cached = self._viable_first_hops_cache.get(key)
++        if cached is not None:
++            return cached
++
+         if type(policy) is ClientToGatewayReachability:
+             graph, roles = self._graph(network, source_id, policy, frozenset())
++            witnesses: dict[str, frozenset[str]] = {}
+             if (
+                 source_id in excluded_nodes
+                 or source_id not in graph
+                 or roles.get(source_id) != TraversalRole.SOURCE
+             ):
+-                return ()
+-            adjacency, reverse = self._adjacency(network, source_id, policy, frozenset())
+-            can_reach_target = {
+-                node_id
+-                for node_id, role in roles.items()
+-                if role == TraversalRole.TARGET and node_id not in excluded_nodes
+-            }
+-            stack = list(can_reach_target)
+-            while stack:
+-                node_id = stack.pop()
+-                for predecessor, _ in reverse[node_id]:
+-                    if predecessor in excluded_nodes or predecessor in can_reach_target:
++                result = ()
++            else:
++                reused = False
++                if excluded_nodes:
++                    for added_exclusion in excluded_nodes:
++                        parent_excluded = excluded_nodes - frozenset((added_exclusion,))
++                        parent_key = (source_id, id(policy), parent_excluded)
++                        parent_result = self._viable_first_hops_cache.get(parent_key)
++                        parent_witnesses = self._first_hop_witness_cache.get(parent_key)
++                        if parent_result is None or parent_witnesses is None:
++                            continue
++                        remaining = tuple(
++                            hop for hop in parent_result if hop != added_exclusion
++                        )
++                        if not all(
++                            added_exclusion not in parent_witnesses[hop]
++                            for hop in remaining
++                        ):
++                            continue
++                        result = remaining
++                        witnesses = {hop: parent_witnesses[hop] for hop in remaining}
++                        reused = True
++                        break
++
++                if not reused:
++                    adjacency, reverse = self._adjacency(
++                        network, source_id, policy, frozenset()
++                    )
++                    can_reach_target = {
++                        node_id
++                        for node_id, role in roles.items()
++                        if role == TraversalRole.TARGET and node_id not in excluded_nodes
++                    }
++                    next_to_target: dict[str, str] = {}
++                    stack = list(can_reach_target)
++                    while stack:
++                        node_id = stack.pop()
++                        for predecessor, _ in reverse[node_id]:
++                            if predecessor in excluded_nodes or predecessor in can_reach_target:
++                                continue
++                            can_reach_target.add(predecessor)
++                            next_to_target[predecessor] = node_id
++                            stack.append(predecessor)
++                    result = tuple(
++                        neighbor
++                        for neighbor, _ in adjacency[source_id]
++                        if neighbor not in excluded_nodes
++                        and roles.get(neighbor) == TraversalRole.TRANSIT
++                        and neighbor in can_reach_target
++                    )
++                    for hop in result:
++                        path_nodes = {hop}
++                        current = hop
++                        while roles.get(current) != TraversalRole.TARGET:
++                            current = next_to_target[current]
++                            path_nodes.add(current)
++                        witnesses[hop] = frozenset(path_nodes)
++            self._first_hop_witness_cache[key] = witnesses
++        else:
++            graph, roles = self._graph(network, source_id, policy, excluded_nodes)
++            if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
++                result = ()
++            else:
++                targets = {
++                    node_id for node_id, role in roles.items() if role == TraversalRole.TARGET
++                }
++                hops: list[str] = []
++                for neighbor in graph.successors(source_id):
++                    if roles.get(neighbor) != TraversalRole.TRANSIT:
+                         continue
+-                    can_reach_target.add(predecessor)
+-                    stack.append(predecessor)
+-            return tuple(
+-                neighbor
+-                for neighbor, _ in adjacency[source_id]
+-                if neighbor not in excluded_nodes
+-                and roles.get(neighbor) == TraversalRole.TRANSIT
+-                and neighbor in can_reach_target
+-            )
++                    reachable = nx.descendants(graph, neighbor) | {neighbor}
++                    if reachable & targets:
++                        hops.append(neighbor)
++                result = tuple(sorted(hops))
+ 
+-        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
+-        if source_id not in graph or roles.get(source_id) != TraversalRole.SOURCE:
+-            return ()
+-        targets = {node_id for node_id, role in roles.items() if role == TraversalRole.TARGET}
+-        result: list[str] = []
+-        for neighbor in graph.successors(source_id):
+-            if roles.get(neighbor) != TraversalRole.TRANSIT:
+-                continue
+-            reachable = nx.descendants(graph, neighbor) | {neighbor}
+-            if reachable & targets:
+-                result.append(neighbor)
+-        return tuple(sorted(result))
++        self._viable_first_hops_cache[key] = result
++        return result
+ 
+     def _distance_heuristic(
+         self,
+@@ -320,18 +439,8 @@
+     ) -> tuple[str, ...] | None:
+         # Exclusions only remove vertices. Search the base graph while skipping
+         # them instead of materializing thousands of N-1/N-2 graphs per frame.
+-        # Preserve custom role evaluation on the original excluded-node graph.
+-        graph_excluded = frozenset() if type(policy) is ClientToGatewayReachability else excluded_nodes
+-        graph, roles = self._graph(network, source_id, policy, graph_excluded)
+-        if (
+-            source_id in excluded_nodes or target_id in excluded_nodes
+-            or source_id not in graph or target_id not in graph
+-            or roles.get(target_id) != TraversalRole.TARGET
+-        ):
+-            return None
+-
+-        # Only the exact built-in, immutable policies have reusable cost values.
+-        # Custom policies (including subclasses) still run on each search.
++        # Cache hits do not need to touch the NetworkX graph at all.
++        self._ensure_network(network)
+         cacheable = (
+             type(policy) is ClientToGatewayReachability
+             and type(cost_policy) in (DistanceCost, HopCountCost)
+@@ -340,6 +449,31 @@
+         if cacheable and key in self._shortest_path_cache:
+             return self._shortest_path_cache[key]
+         if cacheable:
++            # Vertex deletion cannot improve a shortest path.  If a cached path
++            # from a parent exclusion set does not use the newly removed node,
++            # it remains feasible and therefore remains exactly optimal.  The
++            # same monotonicity applies to an already-unreachable parent.
++            if excluded_nodes:
++                for added_exclusion in excluded_nodes:
++                    parent_excluded = excluded_nodes - frozenset((added_exclusion,))
++                    parent_key = (
++                        source_id, target_id, id(policy), type(cost_policy), parent_excluded
++                    )
++                    if parent_key not in self._shortest_path_cache:
++                        continue
++                    parent_path = self._shortest_path_cache[parent_key]
++                    if parent_path is None or added_exclusion not in parent_path:
++                        self._shortest_path_cache[key] = parent_path
++                        return parent_path
++
++            graph, roles = self._graph(network, source_id, policy, frozenset())
++            if (
++                source_id in excluded_nodes or target_id in excluded_nodes
++                or source_id not in graph or target_id not in graph
++                or roles.get(target_id) != TraversalRole.TARGET
++            ):
++                self._shortest_path_cache[key] = None
++                return None
+             adjacency, _ = self._adjacency(network, source_id, policy, frozenset())
+             heuristic = self._distance_heuristic(
+                 network, source_id, target_id, policy, cost_policy
+@@ -349,6 +483,14 @@
+             )
+             self._shortest_path_cache[key] = result
+             return result
++
++        graph, roles = self._graph(network, source_id, policy, excluded_nodes)
++        if (
++            source_id in excluded_nodes or target_id in excluded_nodes
++            or source_id not in graph or target_id not in graph
++            or roles.get(target_id) != TraversalRole.TARGET
++        ):
++            return None
+         return self._shortest_path(graph, source_id, target_id, cost_policy, excluded_nodes)
+ 
+     @staticmethod
+@@ -409,19 +551,12 @@
+         policy: ReachabilityPolicy,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> SatelliteConnectivity:
+-        # Keep connectivity results snapshot-local just like route results.  For
+-        # the reference reachability semantics, a single satellite deletion can
+-        # lower vertex connectivity by at most one.  A maximum-flow witness from
+-        # the baseline lets us resolve most N-1 queries without another flow:
+-        #
+-        # * deleting a vertex of an already known minimum cut gives k-1 exactly;
+-        # * deleting a satellite unused by one integral k-flow leaves that same
+-        #   k-flow intact, so connectivity stays k;
+-        # * only a used, non-cut satellite is ambiguous and needs recomputation.
+-        #
+-        # This is exact, not a heuristic.  Custom policies retain the general
+-        # full-flow path because their graph shape is not assumed here.
+-        self._graph(network, source_id, policy, frozenset())
++        # Keep connectivity results snapshot-local just like route results.
++        # For one deleted satellite, the baseline residual graph tells us
++        # whether some minimum vertex cut contains that satellite.  If it does,
++        # deleting it lowers kappa by exactly one; otherwise the stored integral
++        # k-flow survives and kappa is unchanged.  No second max-flow is needed.
++        self._ensure_network(network)
+         self._policies[id(policy)] = policy
+         key = (source_id, id(policy), excluded_nodes)
+         cached = self._connectivity_cache.get(key)
+@@ -430,7 +565,7 @@
+ 
+         if type(policy) is ClientToGatewayReachability and len(excluded_nodes) == 1:
+             failed = next(iter(excluded_nodes))
+-            node = next((item for item in network.nodes if item.id == failed), None)
++            node = network._nodes_by_id.get(failed)
+             if node is not None and node.kind == NodeKind.SATELLITE:
+                 baseline_key = (source_id, id(policy), frozenset())
+                 baseline = self._connectivity_cache.get(baseline_key)
+@@ -441,25 +576,26 @@
+                     self._connectivity_cache[baseline_key] = baseline
+ 
+                 k = baseline.result.node_disjoint_path_count
+-                cut = baseline.result.minimum_cut
+                 if k == 0:
+                     entry = _ConnectivityEntry(SatelliteConnectivity(0, ()), frozenset())
+-                    self._connectivity_cache[key] = entry
+-                    return entry.result
+-                if failed in cut:
+-                    result = SatelliteConnectivity(
+-                        k - 1,
+-                        tuple(node_id for node_id in cut if node_id != failed),
+-                    )
+-                    entry = _ConnectivityEntry(result, frozenset())
+-                    self._connectivity_cache[key] = entry
+-                    return result
+-                if failed not in baseline.flow_satellites:
+-                    # The baseline cut is still present and the witnessed k-flow
+-                    # avoids the removed satellite, proving equality both ways.
+-                    entry = _ConnectivityEntry(baseline.result, baseline.flow_satellites)
+-                    self._connectivity_cache[key] = entry
+-                    return entry.result
++                else:
++                    witness = baseline.single_failure_cuts.get(failed)
++                    if witness is None:
++                        # No minimum k-cut contains this vertex; the witnessed
++                        # k-flow can be rerouted around its deletion, so k stays.
++                        entry = _ConnectivityEntry(
++                            baseline.result,
++                            baseline.flow_satellites,
++                            baseline.single_failure_cuts,
++                        )
++                    else:
++                        result = SatelliteConnectivity(
++                            k - 1,
++                            tuple(node_id for node_id in witness if node_id != failed),
++                        )
++                        entry = _ConnectivityEntry(result, frozenset())
++                self._connectivity_cache[key] = entry
++                return entry.result
+ 
+         entry = self._compute_satellite_connectivity(
+             network, source_id, policy, excluded_nodes
+@@ -479,7 +615,7 @@
+         if source_id not in graph or not targets:
+             return _ConnectivityEntry(SatelliteConnectivity(0, ()), frozenset())
+ 
+-        nodes = {node.id: node for node in network.nodes}
++        nodes = network._nodes_by_id
+         satellites = [
+             node_id
+             for node_id in graph.nodes
+@@ -514,25 +650,76 @@
+             if residual[incoming(satellite_id)][outgoing(satellite_id)]["flow"] > 0
+         )
+ 
+-        # Match networkx.minimum_cut's partition construction exactly so the
+-        # persisted deterministic cut stays byte-for-byte compatible.
+-        saturated = [
+-            (left, right, data)
+-            for left, right, data in residual.edges(data=True)
+-            if data["flow"] == data["capacity"]
+-        ]
+-        residual.remove_edges_from(saturated)
+-        sink_side = set(nx.shortest_path_length(residual, target=sink))
+-        source_side = set(flow) - sink_side
+-        residual.add_edges_from(saturated)
++        # Build the positive-residual-capacity graph once.  This gives both the
++        # ordinary minimum cut and the single-vertex sensitivity witnesses below
++        # without mutating/copying the NetworkX residual graph.
++        residual_adjacency: dict[tuple[str, str], list[tuple[str, str]]] = {
++            node_id: [] for node_id in residual
++        }
++        residual_reverse: dict[tuple[str, str], list[tuple[str, str]]] = {
++            node_id: [] for node_id in residual
++        }
++        for left, right, data in residual.edges(data=True):
++            if data["flow"] >= data["capacity"]:
++                continue
++            residual_adjacency[left].append(right)
++            residual_reverse[right].append(left)
+ 
++        def residual_reachable(
++            start: tuple[str, str],
++            adjacency: dict[tuple[str, str], list[tuple[str, str]]],
++        ) -> set[tuple[str, str]]:
++            seen = {start}
++            stack = [start]
++            while stack:
++                current = stack.pop()
++                for neighbor in adjacency[current]:
++                    if neighbor in seen:
++                        continue
++                    seen.add(neighbor)
++                    stack.append(neighbor)
++            return seen
++
++        sink_side = residual_reachable(sink, residual_reverse)
++        source_side = set(flow) - sink_side
+         cut = tuple(sorted(
+             satellite_id
+             for satellite_id in satellites
+             if incoming(satellite_id) in source_side and outgoing(satellite_id) in sink_side
+         ))
++
++        single_failure_cuts: dict[str, tuple[str, ...]] = {}
++        if type(policy) is ClientToGatewayReachability and not excluded_nodes:
++            # Every member of the returned minimum cut trivially belongs to a
++            # minimum cut.  For the remaining satellites used by the integral
++            # max flow, residual reachability characterizes whether there is a
++            # different minimum cut containing that satellite.  Store one such
++            # witness now so all N-1 queries become O(1) lookups later.
++            for satellite_id in cut:
++                single_failure_cuts[satellite_id] = cut
++
++            ambiguous = flow_satellites.difference(cut)
++            if ambiguous:
++                source_reachable = residual_reachable(source, residual_adjacency)
++                for satellite_id in sorted(ambiguous):
++                    sat_in = incoming(satellite_id)
++                    sat_out = outgoing(satellite_id)
++                    if sat_out in source_reachable:
++                        continue
++                    from_satellite = residual_reachable(sat_in, residual_adjacency)
++                    if sat_out in from_satellite or sink in from_satellite:
++                        continue
++                    witness_side = source_reachable | from_satellite
++                    witness = tuple(sorted(
++                        candidate
++                        for candidate in satellites
++                        if incoming(candidate) in witness_side
++                        and outgoing(candidate) not in witness_side
++                    ))
++                    single_failure_cuts[satellite_id] = witness
++
+         result = SatelliteConnectivity(int(residual.graph["flow_value"]), cut)
+-        return _ConnectivityEntry(result, flow_satellites)
++        return _ConnectivityEntry(result, flow_satellites, single_failure_cuts)
+ 
+ 
+ def _query_graph(
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/policies.py backend/src/static_model/policies.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/policies.py	2026-09-12 20:26:33.000000000 +0000
++++ backend/src/static_model/policies.py	2026-09-13 13:39:07.301415419 +0000
+@@ -17,12 +17,11 @@
+         ground_id: str,
+         excluded_nodes: frozenset[str] = frozenset(),
+     ) -> tuple[str, ...]:
+-        nodes = {node.id: node for node in network.nodes}
++        nodes = network._nodes_by_id
+         visible = {
+             observation.satellite_id
+-            for observation in network.ground_visibility
+-            if observation.ground_id == ground_id
+-            and observation.satellite_id not in excluded_nodes
++            for observation in network._ground_visibility_by_ground.get(ground_id, ())
++            if observation.satellite_id not in excluded_nodes
+             and observation.satellite_id in nodes
+             and nodes[observation.satellite_id].kind == NodeKind.SATELLITE
+             and nodes[observation.satellite_id].available
+@@ -106,11 +105,7 @@
+ @dataclass(frozen=True, slots=True)
+ class AvailableSatelliteFailureDomain:
+     def candidates(self, network: StaticNetwork) -> tuple[str, ...]:
+-        return tuple(
+-            node.id
+-            for node in network.nodes
+-            if node.kind == NodeKind.SATELLITE and node.available
+-        )
++        return network._available_satellite_ids
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/routing.py backend/src/static_model/routing.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/routing.py	2026-09-13 12:39:57.000000000 +0000
++++ backend/src/static_model/routing.py	2026-09-13 13:45:16.337543671 +0000
+@@ -31,8 +31,8 @@
+     return PreferenceRelation.EQUAL
+ 
+ 
+-def _path_metrics(links: dict[frozenset[str], Link], path: tuple[str, ...]) -> tuple[int, float]:
+-    distance = sum(links[frozenset((left, right))].distance_km for left, right in zip(path, path[1:]))
++def _path_metrics(links: dict[tuple[str, str], Link], path: tuple[str, ...]) -> tuple[int, float]:
++    distance = sum(links[(left, right)].distance_km for left, right in zip(path, path[1:]))
+     return max(0, len(path) - 1), distance
+ 
+ 
+@@ -57,7 +57,7 @@
+         del failure_domain
+         if not target_ids:
+             return None
+-        links = {frozenset((link.a, link.b)): link for link in network.links}
++        links = network._links_by_pair
+         candidates: list[tuple[tuple[str, ...], RouteQuality]] = []
+         for target_id in target_ids:
+             path = graph_algorithms.shortest_path(
+@@ -70,12 +70,13 @@
+             )
+             if path is None:
+                 continue
+-            hops, distance = _path_metrics(links, path)
++            hops = max(0, len(path) - 1)
+             if self.quality_kind == "hops":
+                 quality = RouteQuality((
+                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
+                 ))
+             elif self.quality_kind == "distance":
++                _, distance = _path_metrics(links, path)
+                 quality = RouteQuality((
+                     QualityDimension("total_distance_km", distance, QualityDirection.MINIMIZE),
+                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
+@@ -83,7 +84,7 @@
+             elif self.quality_kind == "cost":
+                 total_cost = 0.0
+                 for left, right in zip(path, path[1:]):
+-                    value = float(self.cost.cost(links[frozenset((left, right))]))
++                    value = float(self.cost.cost(links[(left, right)]))
+                     if not math.isfinite(value) or value < 0:
+                         raise ValueError("route cost must be finite and non-negative")
+                     total_cost += value
+@@ -165,44 +166,66 @@
+             for satellite_id in failure_domain.candidates(network)
+             if satellite_id not in excluded_nodes
+         )
+-        links = {frozenset((link.a, link.b)): link for link in network.links}
+-        no_backup_penalty = sum(link.distance_km for link in network.links) + 1.0
+-
+-        backup_distance: dict[str, float] = {}
+-        survives_failure: dict[str, float] = {}
+-        for satellite_id in satellites:
+-            failure_excluded = excluded_nodes | frozenset((satellite_id,))
+-            backup_candidates: list[tuple[float, int, str, tuple[str, ...]]] = []
++        satellite_set = frozenset(satellites)
++        links = network._links_by_pair
++        no_backup_penalty = network._total_link_distance_km + 1.0
++        distance_cost = DistanceCost()
++
++        def best_distance_route(
++            effective_excluded: frozenset[str],
++        ) -> tuple[float, int, str, tuple[str, ...]] | None:
++            best: tuple[float, int, str, tuple[str, ...]] | None = None
+             for target_id in target_ids:
+                 path = graph_algorithms.shortest_path(
+                     network,
+                     source_id,
+                     target_id,
+                     reachability,
+-                    DistanceCost(),
+-                    failure_excluded,
++                    distance_cost,
++                    effective_excluded,
+                 )
+                 if path is None:
+                     continue
+                 hops, distance = _path_metrics(links, path)
+-                backup_candidates.append((distance, hops, target_id, path))
+-            if backup_candidates:
+-                best = min(backup_candidates)
++                candidate = (distance, hops, target_id, path)
++                if best is None or candidate < best:
++                    best = candidate
++            return best
++
++        # The globally best service path for the current exclusion set is also
++        # the exact optimum after deleting any satellite that is not on it.
++        # Deleting a vertex cannot create a shorter route.
++        baseline_backup = best_distance_route(excluded_nodes)
++        baseline_path_satellites = (
++            frozenset(baseline_backup[3]) & satellite_set
++            if baseline_backup is not None
++            else frozenset()
++        )
++
++        backup_distance: dict[str, float] = {}
++        survives_failure: dict[str, float] = {}
++        for satellite_id in satellites:
++            if baseline_backup is not None and satellite_id not in baseline_path_satellites:
++                survives_failure[satellite_id] = 1.0
++                backup_distance[satellite_id] = baseline_backup[0]
++                continue
++
++            failure_excluded = excluded_nodes | frozenset((satellite_id,))
++            best = best_distance_route(failure_excluded)
++            if best is not None:
+                 survives_failure[satellite_id] = 1.0
+                 backup_distance[satellite_id] = best[0]
+             else:
+                 survives_failure[satellite_id] = 0.0
+                 backup_distance[satellite_id] = no_backup_penalty
+ 
+-        nodes = {node.id: node for node in network.nodes}
+-
+         # First maximize whether every satellite on the selected path can fail
+         # without destroying service.  If such a path exists, fragile
+         # satellites are excluded from the admissible subgraph.
+         robust_satellites = frozenset(
+             satellite_id for satellite_id, survives in survives_failure.items() if survives >= 1.0
+         )
+-        fragile_satellites = frozenset(set(satellites) - set(robust_satellites))
++        fragile_satellites = satellite_set - robust_satellites
+         robust_path_exists = self._any_path(
+             network,
+             source_id,
+@@ -236,21 +259,14 @@
+                     source_id,
+                     target_id,
+                     reachability,
+-                    DistanceCost(),
++                    distance_cost,
+                     effective_excluded,
+                 )
+                 if path is None:
+                     continue
+                 hops, distance = _path_metrics(links, path)
+-                path_satellites = tuple(
+-                    node_id for node_id in path if nodes[node_id].kind == NodeKind.SATELLITE
+-                )
+-                # FailureDomainPolicy defines which satellite failures this strategy
+-                # is asked to protect against. Satellites outside that domain may
+-                # legitimately appear on a route and must not be indexed in the
+-                # counterfactual dictionaries.
+                 evaluated_path_satellites = tuple(
+-                    node_id for node_id in path_satellites if node_id in survives_failure
++                    node_id for node_id in path if node_id in survives_failure
+                 )
+                 if evaluated_path_satellites:
+                     actual_survival = min(
+diff -ruN '--exclude=__pycache__' '--exclude=*.pyc' /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/types.py backend/src/static_model/types.py
+--- /mnt/data/cosmo_opt_round3/baseline_src/cosmo_satellite/backend/src/static_model/types.py	2026-09-12 20:26:33.000000000 +0000
++++ backend/src/static_model/types.py	2026-09-13 13:39:07.301137557 +0000
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from enum import StrEnum
+ 
+ 
+@@ -41,13 +41,43 @@
+ 
+ @dataclass(frozen=True, slots=True)
+ class StaticNetwork:
+-    """A time-agnostic network snapshot.
++    """A time-agnostic network snapshot with immutable query indexes.
+ 
+     ``ground_visibility`` records geometric visibility independently from usable
+-    network links.  This is essential for distinguishing "a satellite is visible"
+-    from "a route to a gateway exists".
++    network links.  The derived indexes are built once per snapshot because the
++    static analysis performs hundreds of lookups against the same topology.
+     """
+ 
+     nodes: tuple[Node, ...]
+     links: tuple[Link, ...]
+     ground_visibility: tuple[GroundVisibility, ...] = ()
++    _nodes_by_id: dict[str, Node] = field(init=False, repr=False, compare=False, hash=False)
++    _links_by_pair: dict[tuple[str, str], Link] = field(init=False, repr=False, compare=False, hash=False)
++    _available_satellite_ids: tuple[str, ...] = field(init=False, repr=False, compare=False, hash=False)
++    _total_link_distance_km: float = field(init=False, repr=False, compare=False, hash=False)
++    _ground_visibility_by_ground: dict[str, tuple[GroundVisibility, ...]] = field(
++        init=False, repr=False, compare=False, hash=False
++    )
++
++    def __post_init__(self) -> None:
++        nodes_by_id = {node.id: node for node in self.nodes}
++        links_by_pair: dict[tuple[str, str], Link] = {}
++        for link in self.links:
++            links_by_pair[(link.a, link.b)] = link
++            links_by_pair[(link.b, link.a)] = link
++
++        visibility_lists: dict[str, list[GroundVisibility]] = {}
++        for observation in self.ground_visibility:
++            visibility_lists.setdefault(observation.ground_id, []).append(observation)
++
++        object.__setattr__(self, "_nodes_by_id", nodes_by_id)
++        object.__setattr__(self, "_links_by_pair", links_by_pair)
++        object.__setattr__(self, "_available_satellite_ids", tuple(
++            node.id for node in self.nodes
++            if node.kind == NodeKind.SATELLITE and node.available
++        ))
++        object.__setattr__(self, "_total_link_distance_km", sum(link.distance_km for link in self.links))
++        object.__setattr__(self, "_ground_visibility_by_ground", {
++            ground_id: tuple(observations)
++            for ground_id, observations in visibility_lists.items()
++        })

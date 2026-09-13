@@ -15,12 +15,15 @@ from .adapters import (
     network_codec,
     network_from_dto,
     network_to_dto,
+    network_to_jsonable,
     scene_codec,
     scene_from_dto,
     scene_to_dto,
+    scene_to_jsonable,
     static_analysis_codec,
     static_analysis_from_dto,
     static_analysis_to_dto,
+    static_analysis_to_jsonable,
 )
 from .dto import (
     ClientFailureImpactDto,
@@ -51,7 +54,7 @@ from .dto import (
     Vec3Dto,
 )
 
-from .dynamic_adapters import dynamic_analysis_codec, dynamic_analysis_to_dto, encode_dynamic_analysis
+from .dynamic_adapters import (dynamic_analysis_codec, dynamic_analysis_to_dto, dynamic_analysis_to_jsonable, encode_dynamic_analysis)
 from .dynamic_dto import (
     AvailabilityStatisticsDto,
     ClientDynamicAnalysisDto,
@@ -93,6 +96,7 @@ from .query_adapters import (
     snapshot_bundle_codec,
     snapshot_bundle_from_dto,
     snapshot_bundle_to_dto,
+    snapshot_bundle_to_jsonable,
 )
 from .query_dto import SampledTraceDto, SamplingRangeDto, SnapshotBundleDto
 

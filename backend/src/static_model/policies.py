@@ -17,12 +17,11 @@ class ObservedActiveSatelliteCoverage:
         ground_id: str,
         excluded_nodes: frozenset[str] = frozenset(),
     ) -> tuple[str, ...]:
-        nodes = {node.id: node for node in network.nodes}
+        nodes = network._nodes_by_id
         visible = {
             observation.satellite_id
-            for observation in network.ground_visibility
-            if observation.ground_id == ground_id
-            and observation.satellite_id not in excluded_nodes
+            for observation in network._ground_visibility_by_ground.get(ground_id, ())
+            if observation.satellite_id not in excluded_nodes
             and observation.satellite_id in nodes
             and nodes[observation.satellite_id].kind == NodeKind.SATELLITE
             and nodes[observation.satellite_id].available
@@ -106,11 +105,7 @@ class DistanceCost:
 @dataclass(frozen=True, slots=True)
 class AvailableSatelliteFailureDomain:
     def candidates(self, network: StaticNetwork) -> tuple[str, ...]:
-        return tuple(
-            node.id
-            for node in network.nodes
-            if node.kind == NodeKind.SATELLITE and node.available
-        )
+        return network._available_satellite_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,14 +118,33 @@ class LexicographicCriticalityRanking:
 
     def rank(self, impacts: tuple[SatelliteFailureImpact, ...]) -> tuple[SatelliteFailureImpact, ...]:
         def key(impact: SatelliteFailureImpact) -> tuple[object, ...]:
+            # Ranking is a hot path during N-1 analysis.  Compute the complete
+            # lexicographic vector in one traversal instead of materializing
+            # property tuples and rescanning clients/routes for every coordinate.
+            lost_clients = 0
+            geometric_visibility_losses = 0
+            valid_ingress_lost = 0
+            reachable_gateways_lost = 0
+            connectivity_loss = 0
+            routes_lost = 0
+            routes_changed = 0
+            for client in impact.clients:
+                lost_clients += int(client.service_lost)
+                geometric_visibility_losses += int(client.geometric_visibility_lost)
+                valid_ingress_lost += client.valid_ingress_lost
+                reachable_gateways_lost += client.reachable_gateways_lost
+                connectivity_loss += client.satellite_connectivity_loss or 0
+                for delta in client.route_deltas:
+                    routes_lost += int(delta.route_lost)
+                    routes_changed += int(delta.path_changed)
             return (
-                -len(impact.lost_clients),
-                -len(impact.clients_losing_geometric_visibility),
-                -impact.total_valid_ingress_lost,
-                -impact.total_reachable_gateways_lost,
-                -impact.total_connectivity_loss,
-                -impact.routes_lost,
-                -impact.routes_changed,
+                -lost_clients,
+                -geometric_visibility_losses,
+                -valid_ingress_lost,
+                -reachable_gateways_lost,
+                -connectivity_loss,
+                -routes_lost,
+                -routes_changed,
                 impact.satellite_id,
             )
 

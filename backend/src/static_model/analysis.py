@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import math
 
@@ -185,9 +185,17 @@ class Route:
 class RoutingState:
     selected_route: Route | None
     routes: tuple[Route, ...]
+    _routes_by_strategy: dict[str, Route] = field(
+        init=False, repr=False, compare=False, hash=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_routes_by_strategy", {
+            route.strategy_id: route for route in self.routes
+        })
 
     def for_strategy(self, strategy_id: str) -> Route | None:
-        return next((route for route in self.routes if route.strategy_id == strategy_id), None)
+        return self._routes_by_strategy.get(strategy_id)
 
 
 @dataclass(frozen=True, slots=True)

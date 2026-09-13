@@ -20,7 +20,7 @@ from .context_scheduler import ContextFrameScheduler
 
 from cosmo_a_json import ScenarioDto, adapt_scenario
 from dynamic_model import DynamicModel, Err as DynamicErr, TimeGrid
-from frontend_json import dynamic_analysis_to_dto, sampled_trace_to_dto, snapshot_bundle_to_dto
+from frontend_json import (dynamic_analysis_to_dto, dynamic_analysis_to_jsonable, sampled_trace_to_dto, snapshot_bundle_to_dto, snapshot_bundle_to_jsonable)
 from model_query import Err as QueryErr, ModelQuery, SampledTrace, SamplingRange, SnapshotBundle
 from spatial3d import Err as SpatialErr, SpatialModel, project_network, project_scene
 from static_model import (
@@ -211,7 +211,7 @@ def _calculate_snapshot(
     if isinstance(snapshot_result, QueryErr):
         raise ValueError(f"Snapshot: {_error_messages(snapshot_result)}")
 
-    return snapshot_bundle_to_dto(snapshot_result.value).model_dump(mode="json")
+    return snapshot_bundle_to_jsonable(snapshot_result.value)
 
 
 def _cache_key(scenario: dict[str, Any], primary_strategy_id: str) -> str:
@@ -285,7 +285,7 @@ def _snapshot_from_dynamic_frame(frame: Any) -> dict[str, Any]:
         network=project_network(frame.spatial),
         analysis=frame.static,
     )
-    return snapshot_bundle_to_dto(bundle).model_dump(mode="json")
+    return snapshot_bundle_to_jsonable(bundle)
 
 
 def _model_run_response(
@@ -316,7 +316,7 @@ def _model_run_response(
         "routing_strategies": list(ROUTING_STRATEGIES),
         "primary_route_strategy_id": primary_strategy_id,
         "trace": sampled_trace_to_dto(trace).model_dump(mode="json"),
-        "dynamic_analysis": dynamic_analysis_to_dto(analysis).model_dump(mode="json"),
+        "dynamic_analysis": dynamic_analysis_to_jsonable(analysis),
     }
 
 

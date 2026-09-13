@@ -72,7 +72,8 @@ def test_snapshot_switch_invalidates_cached_paths_and_unreachable_results():
         assert engine.shortest_path(snapshot, 'C', 'G', policy, DistanceCost()) == expected
         assert engine._cached_network is snapshot
         assert len(engine._shortest_path_cache) == 1
-        assert len(engine._query_graph_cache) == 1
+        assert len(engine._builtin_topology_cache) == 1
+        assert not engine._query_graph_cache
 
 
 def test_custom_cost_and_subclass_are_evaluated_without_path_memoization():
@@ -185,14 +186,22 @@ def test_single_satellite_connectivity_fast_path_preserves_exact_connectivity(se
     optimized = NetworkXGraphAlgorithms()
     reference = NetworkXGraphAlgorithms()
 
+    class ReferencePolicy(ClientToGatewayReachability):
+        pass
+
+    reference_policy = ReferencePolicy()
     baseline = optimized.satellite_connectivity(network, 'C', policy)
-    reference_baseline = reference._compute_satellite_connectivity(network, 'C', policy, frozenset()).result
+    reference_baseline = reference._compute_satellite_connectivity(
+        network, 'C', reference_policy, frozenset()
+    ).result
     assert baseline == reference_baseline
 
     for index in range(6):
         excluded = frozenset((f'S{index}',))
         actual = optimized.satellite_connectivity(network, 'C', policy, excluded)
-        expected = reference._compute_satellite_connectivity(network, 'C', policy, excluded).result
+        expected = reference._compute_satellite_connectivity(
+            network, 'C', reference_policy, excluded
+        ).result
         assert actual.node_disjoint_path_count == expected.node_disjoint_path_count
         assert len(actual.minimum_cut) == actual.node_disjoint_path_count
 

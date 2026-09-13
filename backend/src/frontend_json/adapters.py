@@ -111,6 +111,40 @@ def scene_to_dto(frame: SceneFrame) -> SceneFrameDto:
     )
 
 
+def scene_to_jsonable(frame: SceneFrame) -> dict[str, object]:
+    """Serialize an already-valid scene without rebuilding Pydantic DTOs."""
+    return {
+        "schema_version": "spatial-scene-1.0",
+        "t_s": frame.t_s,
+        "coordinate_frame": frame.coordinate_frame.value,
+        "body_radius_km": frame.body_radius_km,
+        "points": [
+            {
+                "id": point.id,
+                "label": point.label,
+                "kind": point.kind.value,
+                "position": {
+                    "x_km": point.earth_fixed_km.x,
+                    "y_km": point.earth_fixed_km.y,
+                    "z_km": point.earth_fixed_km.z,
+                },
+                "available": point.available,
+                "trajectory_group_id": point.trajectory_group_id,
+            }
+            for point in frame.points
+        ],
+        "contacts": [
+            {
+                "a": segment.a,
+                "b": segment.b,
+                "distance_km": segment.distance_km,
+                "kind": segment.kind.value,
+            }
+            for segment in frame.contacts
+        ],
+    }
+
+
 def scene_from_dto(dto: SceneFrameDto) -> SceneFrame:
     return SceneFrame(
         t_s=dto.t_s,
@@ -176,6 +210,37 @@ def network_to_dto(projection: NetworkProjection) -> NetworkProjectionDto:
     )
 
 
+def network_to_jsonable(projection: NetworkProjection) -> dict[str, object]:
+    """Serialize an already-valid network projection without DTO validation."""
+    def observation(item: NetworkGroundObservation | NetworkGroundVisibility) -> dict[str, object]:
+        return {
+            "ground_id": item.ground_id,
+            "satellite_id": item.satellite_id,
+            "elevation_deg": item.elevation_deg,
+            "distance_km": item.distance_km,
+        }
+
+    return {
+        "schema_version": "spatial-network-1.0",
+        "t_s": projection.t_s,
+        "nodes": [
+            {"id": node.id, "kind": node.kind.value, "available": node.available}
+            for node in projection.nodes
+        ],
+        "edges": [
+            {
+                "a": edge.a,
+                "b": edge.b,
+                "distance_km": edge.distance_km,
+                "kind": edge.kind.value,
+            }
+            for edge in projection.edges
+        ],
+        "ground_observations": [observation(item) for item in projection.ground_observations],
+        "ground_visibility": [observation(item) for item in projection.ground_visibility],
+    }
+
+
 def network_from_dto(dto: NetworkProjectionDto) -> NetworkProjection:
     return NetworkProjection(
         t_s=dto.t_s,
@@ -203,8 +268,12 @@ def network_codec() -> MappedCodec[NetworkProjection, NetworkProjectionDto]:
     )
 
 
-def _route_to_dto(route: Route) -> RouteDto:
-    return RouteDto(
+def _route_to_dto(route: Route, cache: dict[int, RouteDto] | None = None) -> RouteDto:
+    cache_key = id(route)
+    if cache is not None and (cached := cache.get(cache_key)) is not None:
+        return cached
+
+    dto = RouteDto(
         strategy_id=route.strategy_id,
         source_id=route.source_id,
         target_id=route.target_id,
@@ -232,6 +301,9 @@ def _route_to_dto(route: Route) -> RouteDto:
             for item in route.quality.dimensions
         ]),
     )
+    if cache is not None:
+        cache[cache_key] = dto
+    return dto
 
 
 def _route_from_dto(dto: RouteDto) -> Route:
@@ -265,10 +337,16 @@ def _route_from_dto(dto: RouteDto) -> Route:
     )
 
 
-def _routing_to_dto(value: RoutingState) -> RoutingStateDto:
+def _routing_to_dto(
+    value: RoutingState,
+    route_cache: dict[int, RouteDto] | None = None,
+) -> RoutingStateDto:
     return RoutingStateDto(
-        selected_route=None if value.selected_route is None else _route_to_dto(value.selected_route),
-        routes=[_route_to_dto(route) for route in value.routes],
+        selected_route=(
+            None if value.selected_route is None
+            else _route_to_dto(value.selected_route, route_cache)
+        ),
+        routes=[_route_to_dto(route, route_cache) for route in value.routes],
     )
 
 
@@ -278,7 +356,10 @@ def _routing_from_dto(value: RoutingStateDto) -> RoutingState:
     return RoutingState(selected, routes)
 
 
-def _client_to_dto(value: ClientSnapshotAnalysis) -> ClientSnapshotAnalysisDto:
+def _client_to_dto(
+    value: ClientSnapshotAnalysis,
+    route_cache: dict[int, RouteDto] | None = None,
+) -> ClientSnapshotAnalysisDto:
     resilience = None
     if value.resilience is not None:
         resilience = ResilienceStateDto(
@@ -301,7 +382,7 @@ def _client_to_dto(value: ClientSnapshotAnalysis) -> ClientSnapshotAnalysisDto:
             reachable_gateways=list(value.service.reachable_gateways),
             no_route_reason=None if value.service.no_route_reason is None else value.service.no_route_reason.value,
         ),
-        routing=_routing_to_dto(value.routing),
+        routing=_routing_to_dto(value.routing, route_cache),
         resilience=resilience,
     )
 
@@ -331,11 +412,14 @@ def _client_from_dto(value: ClientSnapshotAnalysisDto) -> ClientSnapshotAnalysis
     )
 
 
-def _delta_to_dto(value: RouteFailureDelta) -> RouteFailureDeltaDto:
+def _delta_to_dto(
+    value: RouteFailureDelta,
+    route_cache: dict[int, RouteDto] | None = None,
+) -> RouteFailureDeltaDto:
     return RouteFailureDeltaDto(
         strategy_id=value.strategy_id,
-        before=None if value.before is None else _route_to_dto(value.before),
-        after=None if value.after is None else _route_to_dto(value.after),
+        before=None if value.before is None else _route_to_dto(value.before, route_cache),
+        after=None if value.after is None else _route_to_dto(value.after, route_cache),
         route_lost=value.route_lost,
         path_changed=value.path_changed,
         quality_change=None if value.quality_change is None else value.quality_change.value,
@@ -351,7 +435,10 @@ def _delta_from_dto(value: RouteFailureDeltaDto) -> RouteFailureDelta:
     )
 
 
-def _impact_to_dto(value: SatelliteFailureImpact) -> SatelliteFailureImpactDto:
+def _impact_to_dto(
+    value: SatelliteFailureImpact,
+    route_cache: dict[int, RouteDto] | None = None,
+) -> SatelliteFailureImpactDto:
     clients = [
         ClientFailureImpactDto(
             client_id=item.client_id,
@@ -361,7 +448,7 @@ def _impact_to_dto(value: SatelliteFailureImpact) -> SatelliteFailureImpactDto:
             valid_ingress_lost=item.valid_ingress_lost,
             reachable_gateways_lost=item.reachable_gateways_lost,
             satellite_connectivity_loss=item.satellite_connectivity_loss,
-            route_deltas=[_delta_to_dto(delta) for delta in item.route_deltas],
+            route_deltas=[_delta_to_dto(delta, route_cache) for delta in item.route_deltas],
         )
         for item in value.clients
     ]
@@ -401,6 +488,7 @@ def _impact_from_dto(value: SatelliteFailureImpactDto) -> SatelliteFailureImpact
 
 
 def static_analysis_to_dto(value: StaticAnalysis) -> StaticAnalysisDto:
+    route_cache: dict[int, RouteDto] = {}
     return StaticAnalysisDto(
         summary=NetworkSummaryDto(
             node_count=value.summary.node_count,
@@ -412,8 +500,10 @@ def static_analysis_to_dto(value: StaticAnalysis) -> StaticAnalysisDto:
             reachable_client_count=value.summary.reachable_client_count,
             all_clients_reachable=value.summary.all_clients_reachable,
         ),
-        clients=[_client_to_dto(client) for client in value.clients],
-        satellite_failure_impacts=[_impact_to_dto(impact) for impact in value.satellite_failure_impacts],
+        clients=[_client_to_dto(client, route_cache) for client in value.clients],
+        satellite_failure_impacts=[
+            _impact_to_dto(impact, route_cache) for impact in value.satellite_failure_impacts
+        ],
         satellite_criticality_ranking=[
             RankedSatelliteImpactDto(rank=item.rank, satellite_id=item.impact.satellite_id)
             for item in value.satellite_criticality_ranking
@@ -480,3 +570,155 @@ def encode_static_analysis(analysis: StaticAnalysis):
 def decode_static_analysis(value):
     """Decode the versioned static-analysis JSON contract."""
     return static_analysis_codec().decode(value)
+
+
+def static_analysis_to_jsonable(value: StaticAnalysis) -> dict[str, object]:
+    """Serialize trusted analysis output without re-validating it through Pydantic.
+
+    Domain constructors already enforce the invariants checked by the outbound
+    DTO models. API hot paths can therefore avoid rebuilding and validating
+    thousands of short-lived DTO objects while the public DTO/codec functions
+    remain available for trust-boundary validation and round trips.
+    """
+    route_cache: dict[int, dict[str, object]] = {}
+
+    def route_json(route: Route) -> dict[str, object]:
+        key = id(route)
+        cached = route_cache.get(key)
+        if cached is not None:
+            return cached
+        result: dict[str, object] = {
+            "strategy_id": route.strategy_id,
+            "source_id": route.source_id,
+            "target_id": route.target_id,
+            "node_ids": list(route.node_ids),
+            "segments": [
+                {
+                    "from_id": segment.from_id,
+                    "to_id": segment.to_id,
+                    "kind": segment.kind.value,
+                    "distance_km": segment.distance_km,
+                    "elevation_deg": segment.elevation_deg,
+                }
+                for segment in route.segments
+            ],
+            "metrics": {
+                "hop_count": route.metrics.hop_count,
+                "total_distance_km": route.metrics.total_distance_km,
+            },
+            "quality": {
+                "dimensions": [
+                    {
+                        "name": item.name,
+                        "value": item.value,
+                        "direction": item.direction.value,
+                    }
+                    for item in route.quality.dimensions
+                ]
+            },
+        }
+        route_cache[key] = result
+        return result
+
+    def client_json(client: ClientSnapshotAnalysis) -> dict[str, object]:
+        resilience: dict[str, object] | None = None
+        if client.resilience is not None:
+            resilience = {
+                "satellite_connectivity": {
+                    "node_disjoint_path_count": (
+                        client.resilience.satellite_connectivity.node_disjoint_path_count
+                    ),
+                    "minimum_cut": list(client.resilience.satellite_connectivity.minimum_cut),
+                },
+                "critical_satellites": list(client.resilience.critical_satellites),
+                "survives_any_single_satellite_failure": (
+                    client.resilience.survives_any_single_satellite_failure
+                ),
+            }
+        selected = client.routing.selected_route
+        return {
+            "client_id": client.client_id,
+            "coverage": {
+                "visible_satellites": list(client.coverage.visible_satellites),
+                "has_visibility": client.coverage.has_visibility,
+            },
+            "service": {
+                "reachable": client.service.reachable,
+                "valid_ingress_satellites": list(client.service.valid_ingress_satellites),
+                "reachable_gateways": list(client.service.reachable_gateways),
+                "no_route_reason": (
+                    None if client.service.no_route_reason is None
+                    else client.service.no_route_reason.value
+                ),
+            },
+            "routing": {
+                "selected_route": None if selected is None else route_json(selected),
+                "routes": [route_json(route) for route in client.routing.routes],
+            },
+            "resilience": resilience,
+        }
+
+    def delta_json(delta: RouteFailureDelta) -> dict[str, object]:
+        return {
+            "strategy_id": delta.strategy_id,
+            "before": None if delta.before is None else route_json(delta.before),
+            "after": None if delta.after is None else route_json(delta.after),
+            "route_lost": delta.route_lost,
+            "path_changed": delta.path_changed,
+            "quality_change": (
+                None if delta.quality_change is None else delta.quality_change.value
+            ),
+        }
+
+    def impact_json(impact: SatelliteFailureImpact) -> dict[str, object]:
+        return {
+            "satellite_id": impact.satellite_id,
+            "clients": [
+                {
+                    "client_id": item.client_id,
+                    "service_lost": item.service_lost,
+                    "geometric_visibility_lost": item.geometric_visibility_lost,
+                    "visible_satellites_lost": item.visible_satellites_lost,
+                    "valid_ingress_lost": item.valid_ingress_lost,
+                    "reachable_gateways_lost": item.reachable_gateways_lost,
+                    "satellite_connectivity_loss": item.satellite_connectivity_loss,
+                    "route_deltas": [delta_json(delta) for delta in item.route_deltas],
+                }
+                for item in impact.clients
+            ],
+            "summary": {
+                "lost_clients": list(impact.lost_clients),
+                "clients_losing_geometric_visibility": list(
+                    impact.clients_losing_geometric_visibility
+                ),
+                "total_visible_satellites_lost": impact.total_visible_satellites_lost,
+                "total_valid_ingress_lost": impact.total_valid_ingress_lost,
+                "total_reachable_gateways_lost": impact.total_reachable_gateways_lost,
+                "total_connectivity_loss": impact.total_connectivity_loss,
+                "routes_lost": impact.routes_lost,
+                "routes_changed": impact.routes_changed,
+            },
+        }
+
+    summary = value.summary
+    return {
+        "schema_version": "static-analysis-2.0",
+        "summary": {
+            "node_count": summary.node_count,
+            "link_count": summary.link_count,
+            "available_satellites": summary.available_satellites,
+            "available_gateways": summary.available_gateways,
+            "client_count": summary.client_count,
+            "visible_client_count": summary.visible_client_count,
+            "reachable_client_count": summary.reachable_client_count,
+            "all_clients_reachable": summary.all_clients_reachable,
+        },
+        "clients": [client_json(client) for client in value.clients],
+        "satellite_failure_impacts": [
+            impact_json(impact) for impact in value.satellite_failure_impacts
+        ],
+        "satellite_criticality_ranking": [
+            {"rank": item.rank, "satellite_id": item.impact.satellite_id}
+            for item in value.satellite_criticality_ranking
+        ],
+    }

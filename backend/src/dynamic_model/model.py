@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 import math
@@ -67,6 +67,12 @@ class DynamicModel:
     static_components: StaticComponents
     static_plan: StaticAnalysisPlan
     components: DynamicComponents
+    _availability_cache: dict[tuple[bool, ...], AvailabilityStatistics] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
+    _numeric_cache: dict[tuple[float, ...], NumericStatistics] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
 
     @classmethod
     def create(
@@ -483,62 +489,93 @@ class DynamicModel:
             for satellite_id in impacts
         }))
         strategy_ids = tuple(strategy.id for strategy in self.static_plan.route_strategies)
+        strategy_count = len(strategy_ids)
+        active_counts = Counter(
+            satellite.id
+            for frame in frames
+            for satellite in frame.spatial.satellites
+            if satellite.active
+        )
+        route_summary_cache: dict[tuple[int, ...], tuple[AvailabilityStatistics, int]] = {}
+        quality_relation_cache: dict[
+            tuple[PreferenceRelation, ...], QualityRelationStatistics
+        ] = {}
+        baseline_routes_by_client = {
+            client_id: tuple(
+                baseline_dynamic.routing.for_strategy(strategy_id)
+                for strategy_id in strategy_ids
+            )
+            for client_id, baseline_dynamic in client_by_id.items()
+        }
 
         result: list[SatelliteTemporalCriticality] = []
         for satellite_id in satellite_ids:
-            active_sample_count = sum(
-                any(satellite.id == satellite_id and satellite.active for satellite in frame.spatial.satellites)
-                for frame in frames
-            )
+            active_sample_count = active_counts[satellite_id]
             evaluated_count = sum(satellite_id in impacts for impacts in impacts_by_frame)
             per_client: list[ClientSatelliteTemporalImpact] = []
 
             for client_id, baseline_dynamic in client_by_id.items():
-                baseline_reachable = tuple(
-                    static_clients[client_id].service.reachable
-                    for static_clients in static_clients_by_frame
-                )
                 counterfactual_reachable: list[bool] = []
                 geometric_visibility_loss_samples = 0
                 visible_contact_loss = 0
                 ingress_loss = 0
                 gateways_loss = 0
                 connectivity_loss = 0
-                route_lost = Counter[str]()
-                route_changed = Counter[str]()
-                quality_relations: dict[str, list[PreferenceRelation]] = defaultdict(list)
-                counterfactual_routes: dict[str, list[RouteTimeSample]] = {
-                    strategy_id: [] for strategy_id in strategy_ids
-                }
+                route_lost = [0] * strategy_count
+                route_changed = [0] * strategy_count
+                quality_relations: list[list[PreferenceRelation]] = [
+                    [] for _ in range(strategy_count)
+                ]
+                counterfactual_routes: list[list[Route | None]] = [
+                    [] for _ in range(strategy_count)
+                ]
 
-                for frame, static_clients, impacts in zip(frames, static_clients_by_frame, impacts_by_frame):
+                for frame, static_clients, impacts in zip(
+                    frames, static_clients_by_frame, impacts_by_frame, strict=True
+                ):
                     before = static_clients[client_id]
                     impact = impacts.get(satellite_id)
                     client_impact = self._client_failure_impact(impact, client_id)
                     if client_impact is None:
                         counterfactual_reachable.append(before.service.reachable)
-                        for strategy_id in strategy_ids:
-                            counterfactual_routes[strategy_id].append(RouteTimeSample(
-                                frame.t_s,
-                                before.routing.for_strategy(strategy_id),
-                            ))
+                        for index, strategy_id in enumerate(strategy_ids):
+                            counterfactual_routes[index].append(
+                                before.routing.for_strategy(strategy_id)
+                            )
                         continue
 
-                    after_reachable = before.service.reachable and not client_impact.service_lost
-                    counterfactual_reachable.append(after_reachable)
-                    geometric_visibility_loss_samples += int(client_impact.geometric_visibility_lost)
+                    counterfactual_reachable.append(
+                        before.service.reachable and not client_impact.service_lost
+                    )
+                    geometric_visibility_loss_samples += int(
+                        client_impact.geometric_visibility_lost
+                    )
                     visible_contact_loss += client_impact.visible_satellites_lost
                     ingress_loss += client_impact.valid_ingress_lost
                     gateways_loss += client_impact.reachable_gateways_lost
                     connectivity_loss += client_impact.satellite_connectivity_loss or 0
-                    delta_by_strategy = {delta.strategy_id: delta for delta in client_impact.route_deltas}
-                    for strategy_id in strategy_ids:
-                        delta = delta_by_strategy[strategy_id]
-                        route_lost[strategy_id] += int(delta.route_lost)
-                        route_changed[strategy_id] += int(delta.path_changed)
+
+                    deltas = client_impact.route_deltas
+                    if (
+                        len(deltas) == strategy_count
+                        and all(
+                            delta.strategy_id == strategy_id
+                            for delta, strategy_id in zip(deltas, strategy_ids, strict=True)
+                        )
+                    ):
+                        ordered_deltas = deltas
+                    else:
+                        delta_by_strategy = {delta.strategy_id: delta for delta in deltas}
+                        ordered_deltas = tuple(
+                            delta_by_strategy[strategy_id] for strategy_id in strategy_ids
+                        )
+
+                    for index, delta in enumerate(ordered_deltas):
+                        route_lost[index] += int(delta.route_lost)
+                        route_changed[index] += int(delta.path_changed)
                         if delta.quality_change is not None:
-                            quality_relations[strategy_id].append(delta.quality_change)
-                        counterfactual_routes[strategy_id].append(RouteTimeSample(frame.t_s, delta.after))
+                            quality_relations[index].append(delta.quality_change)
+                        counterfactual_routes[index].append(delta.after)
 
                 counterfactual = self._availability(tuple(counterfactual_reachable))
                 baseline = baseline_dynamic.service.availability
@@ -552,28 +589,39 @@ class DynamicModel:
                 )
 
                 route_impacts_list: list[RouteStrategyFailureTemporalImpact] = []
-                for strategy_id in strategy_ids:
-                    baseline_routes = baseline_dynamic.routing.for_strategy(strategy_id)
-                    if baseline_routes is None:
+                baseline_routes = baseline_routes_by_client[client_id]
+                for index, strategy_id in enumerate(strategy_ids):
+                    baseline_route_analysis = baseline_routes[index]
+                    if baseline_route_analysis is None:
                         raise ValueError(f"missing baseline route strategy {strategy_id!r}")
-                    counterfactual_routes_analysis = self._route_temporal_analysis(
-                        strategy_id,
-                        tuple(counterfactual_routes[strategy_id]),
+                    route_trace = tuple(counterfactual_routes[index])
+                    route_trace_key = tuple(
+                        0 if route is None else id(route) for route in route_trace
                     )
+                    route_summary = route_summary_cache.get(route_trace_key)
+                    if route_summary is None:
+                        route_summary = self._route_availability_and_switch_count_routes(route_trace)
+                        route_summary_cache[route_trace_key] = route_summary
+                    counterfactual_availability, counterfactual_switch_count = route_summary
+                    relations = tuple(quality_relations[index])
+                    relation_statistics = quality_relation_cache.get(relations)
+                    if relation_statistics is None:
+                        relation_statistics = self._quality_relation_statistics(relations)
+                        quality_relation_cache[relations] = relation_statistics
                     route_impacts_list.append(RouteStrategyFailureTemporalImpact(
                         strategy_id=strategy_id,
-                        baseline_availability=baseline_routes.availability,
-                        counterfactual_availability=counterfactual_routes_analysis.availability,
-                        baseline_switch_count=baseline_routes.switch_count,
-                        counterfactual_switch_count=counterfactual_routes_analysis.switch_count,
+                        baseline_availability=baseline_route_analysis.availability,
+                        counterfactual_availability=counterfactual_availability,
+                        baseline_switch_count=baseline_route_analysis.switch_count,
+                        counterfactual_switch_count=counterfactual_switch_count,
                         switch_count_delta=(
-                            counterfactual_routes_analysis.switch_count - baseline_routes.switch_count
+                            counterfactual_switch_count - baseline_route_analysis.switch_count
                         ),
-                        route_lost_samples=route_lost[strategy_id],
-                        route_lost_s=route_lost[strategy_id] * self.grid.step_s,
-                        path_changed_samples=route_changed[strategy_id],
-                        path_changed_s=route_changed[strategy_id] * self.grid.step_s,
-                        quality_changes=self._quality_relation_statistics(tuple(quality_relations[strategy_id])),
+                        route_lost_samples=route_lost[index],
+                        route_lost_s=route_lost[index] * self.grid.step_s,
+                        path_changed_samples=route_changed[index],
+                        path_changed_s=route_changed[index] * self.grid.step_s,
+                        quality_changes=relation_statistics,
                     ))
                 route_impacts = tuple(route_impacts_list)
 
@@ -647,6 +695,23 @@ class DynamicModel:
 
         return tuple(result)
 
+    def _route_availability_and_switch_count_routes(
+        self,
+        routes: tuple[Route | None, ...],
+    ) -> tuple[AvailabilityStatistics, int]:
+        availability = self._availability(tuple(route is not None for route in routes))
+        current_route: Route | None = None
+        switch_count = 0
+        for route in routes:
+            if route is None:
+                current_route = None
+            elif current_route is None:
+                current_route = route
+            elif not self.components.route_identity.same_route(current_route, route):
+                switch_count += 1
+                current_route = route
+        return availability, switch_count
+
     @staticmethod
     def _client_failure_impact(impact, client_id: str) -> ClientFailureImpact | None:
         if impact is None:
@@ -656,16 +721,21 @@ class DynamicModel:
     def _availability(self, available: tuple[bool, ...]) -> AvailabilityStatistics:
         if len(available) != self.grid.sample_count:
             raise ValueError("availability series length does not match the time grid")
+        cached = self._availability_cache.get(available)
+        if cached is not None:
+            return cached
         available_count = sum(available)
         available_intervals = self._boolean_intervals(available, expected=True)
         unavailable_intervals = self._boolean_intervals(available, expected=False)
-        return AvailabilityStatistics(
+        result = AvailabilityStatistics(
             sample_count=len(available),
             available_sample_count=available_count,
             fraction=available_count / len(available),
             available=self._interval_statistics(available_intervals),
             unavailable=self._interval_statistics(unavailable_intervals),
         )
+        self._availability_cache[available] = result
+        return result
 
     @staticmethod
     def _interval_statistics(intervals: tuple[TimeInterval, ...]) -> IntervalStatistics:
@@ -697,15 +767,20 @@ class DynamicModel:
             intervals.append(TimeInterval(start, self.grid.end_s))
         return tuple(intervals)
 
-    @staticmethod
-    def _numeric(values: tuple[float, ...]) -> NumericStatistics:
+    def _numeric(self, values: tuple[float, ...]) -> NumericStatistics:
+        cached = self._numeric_cache.get(values)
+        if cached is not None:
+            return cached
         if not values:
-            return NumericStatistics(0, None, None, None)
-        if any(not math.isfinite(value) for value in values):
-            raise ValueError("numeric temporal metric contains a non-finite value")
-        return NumericStatistics(
-            sample_count=len(values),
-            minimum=min(values),
-            maximum=max(values),
-            mean=sum(values) / len(values),
-        )
+            result = NumericStatistics(0, None, None, None)
+        else:
+            if any(not math.isfinite(value) for value in values):
+                raise ValueError("numeric temporal metric contains a non-finite value")
+            result = NumericStatistics(
+                sample_count=len(values),
+                minimum=min(values),
+                maximum=max(values),
+                mean=sum(values) / len(values),
+            )
+        self._numeric_cache[values] = result
+        return result

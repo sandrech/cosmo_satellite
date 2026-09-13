@@ -197,6 +197,19 @@ class CircularOrbitTrajectory:
     configuration: CircularOrbitConfiguration
     _planes: Mapping[str, OrbitalPlane] = field(init=False, repr=False, compare=False)
     _assignments: Mapping[str, CircularOrbitAssignment] = field(init=False, repr=False, compare=False)
+    _radius_km: float = field(init=False, repr=False, compare=False)
+    _mean_motion: float = field(init=False, repr=False, compare=False)
+    _cos_inclination: float = field(init=False, repr=False, compare=False)
+    _sin_inclination: float = field(init=False, repr=False, compare=False)
+    _plane_trig: Mapping[str, tuple[float, float]] = field(
+        init=False, repr=False, compare=False
+    )
+    _initial_argument: Mapping[str, float] = field(
+        init=False, repr=False, compare=False
+    )
+    _earth_rotation_cache: dict[float, tuple[float, float]] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -204,11 +217,34 @@ class CircularOrbitTrajectory:
             "_planes",
             MappingProxyType({plane.id: plane for plane in self.configuration.planes}),
         )
+        assignments = {item.satellite_id: item for item in self.configuration.assignments}
+        object.__setattr__(self, "_assignments", MappingProxyType(assignments))
+
+        env = self.configuration.environment
+        radius = self.body.radius_km + env.altitude_km
+        inclination = math.radians(env.inclination_deg)
+        object.__setattr__(self, "_radius_km", radius)
         object.__setattr__(
             self,
-            "_assignments",
-            MappingProxyType({item.satellite_id: item for item in self.configuration.assignments}),
+            "_mean_motion",
+            math.sqrt(env.gravitational_parameter_km3_s2 / radius**3),
         )
+        object.__setattr__(self, "_cos_inclination", math.cos(inclination))
+        object.__setattr__(self, "_sin_inclination", math.sin(inclination))
+        object.__setattr__(self, "_plane_trig", MappingProxyType({
+            plane.id: (
+                math.cos(math.radians(plane.raan_deg)),
+                math.sin(math.radians(plane.raan_deg)),
+            )
+            for plane in self.configuration.planes
+        }))
+        phases = {plane.id: plane.phase_deg for plane in self.configuration.planes}
+        object.__setattr__(self, "_initial_argument", MappingProxyType({
+            item.satellite_id: math.radians(item.slot_deg + phase)
+            for item in self.configuration.assignments
+            if (phase := phases.get(item.plane_id)) is not None
+        }))
+        object.__setattr__(self, "_earth_rotation_cache", {})
 
     def validate_for(self, spec: SpatialSpecification) -> Result[None, SpatialProblems]:
         if self.body != spec.body:
@@ -227,21 +263,15 @@ class CircularOrbitTrajectory:
 
     def state_at(self, satellite_id: str, t_s: float) -> SatelliteKinematicState:
         assignment = self._assignments[satellite_id]
-        plane = self._planes[assignment.plane_id]
         env = self.configuration.environment
-
-        radius = self.body.radius_km + env.altitude_km
-        mean_motion = math.sqrt(env.gravitational_parameter_km3_s2 / radius**3)
-        inclination = math.radians(env.inclination_deg)
-        ascending_node = math.radians(plane.raan_deg)
-        argument = math.radians(assignment.slot_deg + plane.phase_deg) + mean_motion * t_s
+        radius = self._radius_km
+        argument = self._initial_argument[satellite_id] + self._mean_motion * t_s
 
         cos_u = math.cos(argument)
         sin_u = math.sin(argument)
-        cos_omega = math.cos(ascending_node)
-        sin_omega = math.sin(ascending_node)
-        cos_i = math.cos(inclination)
-        sin_i = math.sin(inclination)
+        cos_omega, sin_omega = self._plane_trig[assignment.plane_id]
+        cos_i = self._cos_inclination
+        sin_i = self._sin_inclination
 
         inertial = Vec3(
             radius * (cos_omega * cos_u - sin_omega * sin_u * cos_i),
@@ -249,9 +279,15 @@ class CircularOrbitTrajectory:
             radius * sin_u * sin_i,
         )
 
-        theta = math.radians(env.earth_angle0_deg) + 2.0 * math.pi * t_s / env.rotation_period_s
-        cos_theta = math.cos(theta)
-        sin_theta = math.sin(theta)
+        rotation = self._earth_rotation_cache.get(t_s)
+        if rotation is None:
+            theta = (
+                math.radians(env.earth_angle0_deg)
+                + 2.0 * math.pi * t_s / env.rotation_period_s
+            )
+            rotation = (math.cos(theta), math.sin(theta))
+            self._earth_rotation_cache[t_s] = rotation
+        cos_theta, sin_theta = rotation
         earth_fixed = Vec3(
             cos_theta * inertial.x + sin_theta * inertial.y,
             -sin_theta * inertial.x + cos_theta * inertial.y,

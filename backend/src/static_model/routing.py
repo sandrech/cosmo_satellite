@@ -5,7 +5,7 @@ import math
 
 from .analysis import PreferenceRelation, QualityDimension, QualityDirection, RouteQuality
 from .contracts import FailureDomainPolicy, GraphAlgorithms, ReachabilityPolicy, RouteCostPolicy, TraversalRole
-from .policies import DistanceCost, HopCountCost
+from .policies import AvailableSatelliteFailureDomain, DistanceCost, HopCountCost
 from .types import Link, NodeKind, StaticNetwork
 
 
@@ -16,6 +16,12 @@ def compare_lexicographic(lhs: RouteQuality, rhs: RouteQuality) -> PreferenceRel
     separate from ``RouteQuality.relation_to``, which is the product/Pareto
     partial order and may return INCOMPARABLE.
     """
+
+    # Route objects are aggressively reused by the static analysis. In N-1
+    # evaluation this is the overwhelmingly common case and needs no schema
+    # reconstruction or floating-point comparisons.
+    if lhs is rhs:
+        return PreferenceRelation.EQUAL
 
     left_schema = tuple((item.name, item.direction) for item in lhs.dimensions)
     right_schema = tuple((item.name, item.direction) for item in rhs.dimensions)
@@ -31,9 +37,18 @@ def compare_lexicographic(lhs: RouteQuality, rhs: RouteQuality) -> PreferenceRel
     return PreferenceRelation.EQUAL
 
 
-def _path_metrics(links: dict[frozenset[str], Link], path: tuple[str, ...]) -> tuple[int, float]:
-    distance = sum(links[frozenset((left, right))].distance_km for left, right in zip(path, path[1:]))
-    return max(0, len(path) - 1), distance
+def _path_metrics(network: StaticNetwork, path: tuple[str, ...]) -> tuple[int, float]:
+    cached = network._path_metrics_by_nodes.get(path)
+    if cached is not None:
+        return cached
+
+    links = network._links_by_pair
+    metrics = (
+        max(0, len(path) - 1),
+        sum(links[(left, right)].distance_km for left, right in zip(path, path[1:])),
+    )
+    network._path_metrics_by_nodes[path] = metrics
+    return metrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +72,7 @@ class ShortestPathRouting:
         del failure_domain
         if not target_ids:
             return None
-        links = {frozenset((link.a, link.b)): link for link in network.links}
+        links = network._links_by_pair
         candidates: list[tuple[tuple[str, ...], RouteQuality]] = []
         for target_id in target_ids:
             path = graph_algorithms.shortest_path(
@@ -70,12 +85,13 @@ class ShortestPathRouting:
             )
             if path is None:
                 continue
-            hops, distance = _path_metrics(links, path)
+            hops = max(0, len(path) - 1)
             if self.quality_kind == "hops":
                 quality = RouteQuality((
                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
                 ))
             elif self.quality_kind == "distance":
+                _, distance = _path_metrics(network, path)
                 quality = RouteQuality((
                     QualityDimension("total_distance_km", distance, QualityDirection.MINIMIZE),
                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
@@ -83,7 +99,7 @@ class ShortestPathRouting:
             elif self.quality_kind == "cost":
                 total_cost = 0.0
                 for left, right in zip(path, path[1:]):
-                    value = float(self.cost.cost(links[frozenset((left, right))]))
+                    value = float(self.cost.cost(links[(left, right)]))
                     if not math.isfinite(value) or value < 0:
                         raise ValueError("route cost must be finite and non-negative")
                     total_cost += value
@@ -160,104 +176,119 @@ class ResilientThenDistanceRouting:
         if not target_ids:
             return None
 
-        satellites = tuple(
-            satellite_id
-            for satellite_id in failure_domain.candidates(network)
-            if satellite_id not in excluded_nodes
-        )
-        links = {frozenset((link.a, link.b)): link for link in network.links}
-        no_backup_penalty = sum(link.distance_km for link in network.links) + 1.0
+        if type(failure_domain) is AvailableSatelliteFailureDomain:
+            satellites = network._available_satellite_ids
+            satellite_set = network._available_satellite_id_set
+        else:
+            satellites = failure_domain.candidates(network)
+            satellite_set = frozenset(satellites)
+        links = network._links_by_pair
+        no_backup_penalty = network._total_link_distance_km + 1.0
+        distance_cost = DistanceCost()
 
-        backup_distance: dict[str, float] = {}
-        survives_failure: dict[str, float] = {}
-        for satellite_id in satellites:
-            failure_excluded = excluded_nodes | frozenset((satellite_id,))
-            backup_candidates: list[tuple[float, int, str, tuple[str, ...]]] = []
+        def best_distance_route(
+            effective_excluded: frozenset[str],
+        ) -> tuple[float, int, str, tuple[str, ...]] | None:
+            best: tuple[float, int, str, tuple[str, ...]] | None = None
             for target_id in target_ids:
                 path = graph_algorithms.shortest_path(
                     network,
                     source_id,
                     target_id,
                     reachability,
-                    DistanceCost(),
-                    failure_excluded,
-                )
-                if path is None:
-                    continue
-                hops, distance = _path_metrics(links, path)
-                backup_candidates.append((distance, hops, target_id, path))
-            if backup_candidates:
-                best = min(backup_candidates)
-                survives_failure[satellite_id] = 1.0
-                backup_distance[satellite_id] = best[0]
-            else:
-                survives_failure[satellite_id] = 0.0
-                backup_distance[satellite_id] = no_backup_penalty
-
-        nodes = {node.id: node for node in network.nodes}
-
-        # First maximize whether every satellite on the selected path can fail
-        # without destroying service.  If such a path exists, fragile
-        # satellites are excluded from the admissible subgraph.
-        robust_satellites = frozenset(
-            satellite_id for satellite_id, survives in survives_failure.items() if survives >= 1.0
-        )
-        fragile_satellites = frozenset(set(satellites) - set(robust_satellites))
-        robust_path_exists = self._any_path(
-            network,
-            source_id,
-            target_ids,
-            reachability,
-            graph_algorithms,
-            excluded_nodes | fragile_satellites,
-        )
-        base_excluded = excluded_nodes | (fragile_satellites if robust_path_exists else frozenset())
-
-        # Then solve the minimax backup-distance problem.  A threshold B admits
-        # only satellites whose own failure leaves a backup no longer than B.
-        admissible_satellites = tuple(
-            satellite_id for satellite_id in satellites if satellite_id not in base_excluded
-        )
-        thresholds = sorted({backup_distance[satellite_id] for satellite_id in admissible_satellites})
-        if not thresholds:
-            thresholds = [0.0]
-
-        for threshold in thresholds:
-            too_expensive = frozenset(
-                satellite_id
-                for satellite_id in admissible_satellites
-                if backup_distance[satellite_id] > threshold
-            )
-            effective_excluded = base_excluded | too_expensive
-            candidates: list[tuple[tuple[str, ...], RouteQuality]] = []
-            for target_id in target_ids:
-                path = graph_algorithms.shortest_path(
-                    network,
-                    source_id,
-                    target_id,
-                    reachability,
-                    DistanceCost(),
+                    distance_cost,
                     effective_excluded,
                 )
                 if path is None:
                     continue
-                hops, distance = _path_metrics(links, path)
-                path_satellites = tuple(
-                    node_id for node_id in path if nodes[node_id].kind == NodeKind.SATELLITE
+                hops, distance = _path_metrics(network, path)
+                candidate = (distance, hops, target_id, path)
+                if best is None or candidate < best:
+                    best = candidate
+            return best
+
+        # The globally best service path for the current exclusion set is also
+        # the exact optimum after deleting any satellite that is not on it.
+        # Deleting a vertex cannot create a shorter route.
+        baseline_backup = best_distance_route(excluded_nodes)
+        baseline_path_satellites = (
+            frozenset(baseline_backup[3]) & satellite_set
+            if baseline_backup is not None
+            else frozenset()
+        )
+
+        baseline_distance = no_backup_penalty if baseline_backup is None else baseline_backup[0]
+        # Only satellites on the current shortest service path can change the
+        # optimum when deleted. Every other available satellite has the same
+        # exact backup distance as the baseline route. Keep overrides only for
+        # that usually tiny path instead of materializing O(|S|) dictionaries
+        # for every N-1 analysis.
+        backup_overrides: dict[str, float] = {}
+        fragile_satellites_set: set[str] = set()
+        for satellite_id in baseline_path_satellites:
+            best = best_distance_route(excluded_nodes | frozenset((satellite_id,)))
+            if best is None:
+                fragile_satellites_set.add(satellite_id)
+                backup_overrides[satellite_id] = no_backup_penalty
+            else:
+                backup_overrides[satellite_id] = best[0]
+
+        fragile_satellites = frozenset(fragile_satellites_set)
+
+        # A satellite is marked fragile only when deleting that satellite alone
+        # makes every service target unreachable. Hence no path can avoid all
+        # fragile satellites when the set is non-empty; when it is empty there
+        # is nothing to exclude. In both cases the former reachability probe
+        # reduced exactly to the current exclusion set.
+        base_excluded = excluded_nodes
+
+        # All non-baseline-path satellites have ``baseline_distance``. Vertex
+        # deletion cannot improve a shortest path, so every override is >= that
+        # value. Consequently only baseline-path overrides can become excluded
+        # while thresholding the minimax backup-distance objective.
+        admissible_path_satellites = tuple(
+            satellite_id
+            for satellite_id in baseline_path_satellites
+            if satellite_id not in base_excluded
+        )
+        remaining_satellites = len(satellite_set) - sum(
+            satellite_id in satellite_set for satellite_id in base_excluded
+        )
+        has_default_backup = remaining_satellites > len(baseline_path_satellites)
+        thresholds = {backup_overrides[satellite_id] for satellite_id in admissible_path_satellites}
+        if has_default_backup:
+            thresholds.add(baseline_distance)
+        if not thresholds:
+            thresholds.add(0.0)
+
+        for threshold in sorted(thresholds):
+            too_expensive = frozenset(
+                satellite_id
+                for satellite_id in admissible_path_satellites
+                if backup_overrides[satellite_id] > threshold
+            )
+            effective_excluded = base_excluded | too_expensive
+            best_candidate: tuple[tuple[object, ...], tuple[str, ...], RouteQuality] | None = None
+            for target_id in target_ids:
+                path = graph_algorithms.shortest_path(
+                    network,
+                    source_id,
+                    target_id,
+                    reachability,
+                    distance_cost,
+                    effective_excluded,
                 )
-                # FailureDomainPolicy defines which satellite failures this strategy
-                # is asked to protect against. Satellites outside that domain may
-                # legitimately appear on a route and must not be indexed in the
-                # counterfactual dictionaries.
-                evaluated_path_satellites = tuple(
-                    node_id for node_id in path_satellites if node_id in survives_failure
-                )
-                if evaluated_path_satellites:
-                    actual_survival = min(
-                        survives_failure[node_id] for node_id in evaluated_path_satellites
+                if path is None:
+                    continue
+                hops, distance = _path_metrics(network, path)
+                path_satellites = tuple(node_id for node_id in path if node_id in satellite_set)
+                if path_satellites:
+                    actual_survival = (
+                        0.0 if any(node_id in fragile_satellites for node_id in path_satellites) else 1.0
                     )
                     worst_backup = max(
-                        backup_distance[node_id] for node_id in evaluated_path_satellites
+                        backup_overrides.get(node_id, baseline_distance)
+                        for node_id in path_satellites
                     )
                 else:
                     actual_survival = 1.0
@@ -276,29 +307,15 @@ class ResilientThenDistanceRouting:
                     QualityDimension("total_distance_km", distance, QualityDirection.MINIMIZE),
                     QualityDimension("hop_count", float(hops), QualityDirection.MINIMIZE),
                 ))
-                candidates.append((path, quality))
+                key = self._selection_key(path, quality)
+                candidate = (key, path, quality)
+                if best_candidate is None or candidate[0] < best_candidate[0]:
+                    best_candidate = candidate
 
-            if candidates:
-                return min(candidates, key=lambda item: self._selection_key(item[0], item[1]))
+            if best_candidate is not None:
+                return best_candidate[1], best_candidate[2]
 
         return None
-
-    @staticmethod
-    def _any_path(
-        network: StaticNetwork,
-        source_id: str,
-        target_ids: tuple[str, ...],
-        reachability: ReachabilityPolicy,
-        graph_algorithms: GraphAlgorithms,
-        excluded_nodes: frozenset[str],
-    ) -> bool:
-        reachable = set(graph_algorithms.reachable_targets(
-            network,
-            source_id,
-            reachability,
-            excluded_nodes,
-        ))
-        return bool(reachable.intersection(target_ids))
 
     def compare_quality(self, lhs: RouteQuality, rhs: RouteQuality) -> PreferenceRelation:
         return compare_lexicographic(lhs, rhs)

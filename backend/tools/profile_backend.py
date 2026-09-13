@@ -34,7 +34,7 @@ def main() -> None:
     from api_service.app import _calculate_snapshot, _decode_scenario, _static_plan
     from cosmo_a_json import adapt_scenario
     from dynamic_model import DynamicModel, TimeGrid
-    from frontend_json import dynamic_analysis_to_dto
+    from frontend_json import dynamic_analysis_to_jsonable
     from spatial3d import SpatialModel
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -46,7 +46,7 @@ def main() -> None:
         model = DynamicModel.create(spatial, TimeGrid.from_horizon(args.frames * 120, 120),
                                     adapted.calculation.target_availability,
                                     static_plan=_static_plan('minimum_hops')).value
-        return dynamic_analysis_to_dto(model.analyze().value).model_dump(mode='json')
+        return dynamic_analysis_to_jsonable(model.analyze().value)
 
     workloads = [(name + '-snapshot-34680', lambda raw=raw: _calculate_snapshot(raw, 34680., 'minimum_hops'))
                  for name, raw in scenarios.items()]

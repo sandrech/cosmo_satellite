@@ -7,10 +7,13 @@ from model_query import SampledTrace, SamplingRange, SnapshotBundle
 from .adapters import (
     network_from_dto,
     network_to_dto,
+    network_to_jsonable,
     scene_from_dto,
     scene_to_dto,
+    scene_to_jsonable,
     static_analysis_from_dto,
     static_analysis_to_dto,
+    static_analysis_to_jsonable,
 )
 from .query_dto import SampledTraceDto, SamplingRangeDto, SnapshotBundleDto
 
@@ -27,6 +30,17 @@ def snapshot_bundle_to_dto(value: SnapshotBundle) -> SnapshotBundleDto:
         analysis=static_analysis_to_dto(value.analysis),
     )
 
+
+
+def snapshot_bundle_to_jsonable(value: SnapshotBundle) -> dict[str, object]:
+    """Fast trusted-output serializer for API hot paths."""
+    return {
+        "schema_version": "model-snapshot-2.0",
+        "t_s": value.t_s,
+        "scene": scene_to_jsonable(value.scene),
+        "network": network_to_jsonable(value.network),
+        "analysis": static_analysis_to_jsonable(value.analysis),
+    }
 
 def snapshot_bundle_from_dto(value: SnapshotBundleDto) -> SnapshotBundle:
     return SnapshotBundle(

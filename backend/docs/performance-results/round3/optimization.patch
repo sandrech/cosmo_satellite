@@ -1,0 +1,483 @@
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.pytest_cache' /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/PERFORMANCE-round3.md /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/PERFORMANCE-round3.md
+--- /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/PERFORMANCE-round3.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/PERFORMANCE-round3.md	2026-09-13 13:32:20.298891649 +0000
+@@ -0,0 +1,41 @@
++# Backend performance: third optimization pass
++
++This pass starts from `cosmo_satellite_backend_further_optimized.tar.xz`, i.e. the already-optimized archive supplied for this round. The goal was to reduce backend CPU time further without changing routing/resilience semantics or the external JSON/API contracts.
++
++## Result
++
++The benchmark uses the repository's real API calculation plan (`api_service.app._static_plan` with all three routing strategies, resilience and failure impacts), one warm-up and 21 measured repetitions. The dynamic workload contains three 120-second frames. Final `json.dumps` hashing is outside the timed region; domain calculation, DTO conversion and `model_dump` used by the workload are timed. Peak memory is Python allocation peak reported by `tracemalloc`.
++
++| Workload | Before median | After median | Speedup | Before peak | After peak | Peak change |
++|---|---:|---:|---:|---:|---:|---:|
++| `01_full_constellation-snapshot-34680` | 0.1681 s | **0.0412 s** | **4.08×** | 11.55 MB | 4.88 MB | 57.8% lower |
++| `02_first_launch-snapshot-34680` | 0.0064 s | **0.0055 s** | **1.17×** | 0.76 MB | 0.79 MB | 4.4% higher |
++| `03_satellite_outages-snapshot-34680` | 0.0195 s | **0.0131 s** | **1.48×** | 1.92 MB | 2.00 MB | 3.9% higher |
++| `04_link_range-snapshot-34680` | 0.0867 s | **0.0303 s** | **2.86×** | 8.46 MB | 3.56 MB | 57.9% lower |
++| `01_full_constellation-snapshot-0` | 0.1777 s | **0.0432 s** | **4.11×** | 13.56 MB | 4.97 MB | 63.3% lower |
++| `01_full_constellation-dynamic-3` | 0.4252 s | **0.1066 s** | **3.99×** | 12.45 MB | 4.20 MB | 66.3% lower |
++
++All six serialized benchmark outputs have exactly the same SHA-256 before and after this pass. The full backend test suite passes: **239 tests**.
++
++## Main changes
++
++1. **Exact resilient-routing replacement-path reduction.** For a satellite outside one selected shortest backup path, deleting that satellite cannot worsen that path: the path is still feasible and vertex deletion cannot create a shorter path. Replacement shortest-path searches are therefore required only for failure-domain satellites on the current shortest path.
++2. **Parent-exclusion shortest-path reuse.** A cached optimal path in a less restricted graph remains the exact deterministic optimum after additional vertex deletions whenever the cached path avoids the newly deleted vertex. Cached unreachability is also monotone under deletion. This removes most repeated N-1/N-2 A* work.
++3. **Exact single-failure connectivity from one max-flow residual.** A one-vertex deletion can reduce vertex connectivity by at most one. The baseline residual identifies which satellites belong to a minimum cut and provides a valid witness cut for each relevant deletion. The common full-constellation snapshot now needs only the three baseline connectivity flows (one per client), while single-satellite failure values are derived exactly.
++4. **Reachability/ingress witness reuse.** Built-in client-to-gateway reachability now stores one witness path per reachable target and viable first hop. For a child exclusion set, if the new deletion misses every surviving witness, monotonicity proves the cached result remains complete. Custom reachability policies retain the generic path.
++5. **Snapshot-local derived indexes.** `StaticNetwork` precomputes node lookup, bidirectional link lookup, available satellites, visibility groups and total link distance once. Hot routing and policy loops no longer rebuild dictionaries or allocate `frozenset` edge keys repeatedly. These indexes are private derived fields and do not participate in equality/hash/serialization.
++6. **Immutable route reuse.** `StaticModel` memoizes `Route` values by `(strategy, path, quality)`. Repeated failure analyses therefore reuse exact immutable route objects instead of rebuilding segments/metrics. Outbound DTO conversion then safely reuses already validated `RouteDto` objects by identity; Pydantic validation itself is not disabled.
++7. **Dynamic aggregation reuse.** Equal availability sequences and identical counterfactual route traces reuse their immutable aggregate statistics. Dynamic DTO encoding likewise reuses equal immutable availability/numeric/relation DTOs.
++8. **Smaller repeated work.** Reachable targets are passed once into all strategies for a client; hop-only routing no longer computes an unused geometric distance; reusable `DistanceCost` and precomputed total link distance remove additional hot-loop allocations/scans.
++
++## Correctness checks
++
++- Every benchmark output is byte-equivalent after canonical JSON serialization (matching SHA-256).
++- Randomized optimized-graph tests compare shortest paths against an independent exhaustive oracle with ties, N-1 and N-2 deletions.
++- Reachable targets and viable first hops are compared with fully materialized NetworkX exclusion graphs for N-1 and N-2 satellite failures.
++- Single-satellite connectivity is checked against a fresh full max-flow calculation over randomized networks; returned fast-path cuts are additionally verified to disconnect service.
++- Custom/subclass reachability and custom cost policies keep the generic non-memoized semantics where snapshot-stability cannot be assumed.
++
++## Remaining hotspots
++
++At this point the large algorithmic redundancies are mostly gone. The remaining full-snapshot profile is split between failure-impact orchestration, baseline reachability/connectivity work, resilient-route bookkeeping, spatial snapshot generation and DTO validation/serialization. Further gains are possible, but the next large step would likely require a more specialized graph representation / batched cut and reachability engine rather than more Python-level micro-optimizations.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.pytest_cache' /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/performance-results/round3/after-summary.json /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/performance-results/round3/after-summary.json
+--- /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/performance-results/round3/after-summary.json	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/performance-results/round3/after-summary.json	2026-09-13 13:32:19.698607904 +0000
+@@ -0,0 +1,214 @@
++{
++  "environment": {
++    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
++    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
++    "processor": "",
++    "cpu_count": 5,
++    "dependencies": {
++      "networkx": "3.6.1",
++      "pydantic": "2.13.4",
++      "fastapi": "0.128.2"
++    }
++  },
++  "method": {
++    "repeats": 21,
++    "warmups": 1,
++    "frames": 3,
++    "plan": "api_service.app._static_plan: all 3 strategies, resilience and failure impacts",
++    "timing": "perf_counter, fresh model each iteration; JSON serialization after timing"
++  },
++  "workloads": [
++    {
++      "name": "01_full_constellation-snapshot-34680",
++      "samples_s": [
++        0.040292706999935035,
++        0.03805331199964712,
++        0.03899857900023562,
++        0.03923548800003118,
++        0.0417159159997027,
++        0.04468963499994061,
++        0.04306958899996971,
++        0.040563346999988426,
++        0.03952810600003431,
++        0.043778126999768574,
++        0.046762967000177014,
++        0.04543354099996577,
++        0.044616290999783814,
++        0.03939566899998681,
++        0.04028220700001839,
++        0.03923205899991444,
++        0.04120454400026574,
++        0.04513620700026877,
++        0.04222887800005992,
++        0.050376197999867145,
++        0.039465250999910495
++      ],
++      "median_s": 0.04120454400026574,
++      "min_s": 0.03805331199964712,
++      "max_s": 0.050376197999867145,
++      "output_sha256": "affc1a1d9225354e534cdf1a63e721b6cf34fcb2c056e7926529a81caaaad9d2",
++      "output_bytes": 817505,
++      "peak_traced_bytes": 4878190
++    },
++    {
++      "name": "02_first_launch-snapshot-34680",
++      "samples_s": [
++        0.008489108000048873,
++        0.005118904000028124,
++        0.005506929999683052,
++        0.005434809000234964,
++        0.005090971999834437,
++        0.00512208100008138,
++        0.004959352999776456,
++        0.005621207999865874,
++        0.005679030000010243,
++        0.005818316000386403,
++        0.006081112000174471,
++        0.005766566000147577,
++        0.006434448000163684,
++        0.005475214999933087,
++        0.004933907000122417,
++        0.005117817999689578,
++        0.005334503000085533,
++        0.005813949999719625,
++        0.005400740999903064,
++        0.005387026999869704,
++        0.005468238000048586
++      ],
++      "median_s": 0.005468238000048586,
++      "min_s": 0.004933907000122417,
++      "max_s": 0.008489108000048873,
++      "output_sha256": "57111e369d66ba9de2486fbf151a051f079778912ffd1f9984f0233bfb86bd0a",
++      "output_bytes": 56029,
++      "peak_traced_bytes": 793344
++    },
++    {
++      "name": "03_satellite_outages-snapshot-34680",
++      "samples_s": [
++        0.012978006999674108,
++        0.01348246299994571,
++        0.014704825000080746,
++        0.013142037999841705,
++        0.021279428000070766,
++        0.01338163100035672,
++        0.013328218999959063,
++        0.011884045000442711,
++        0.012106159999802912,
++        0.012826358999973309,
++        0.011964401000113867,
++        0.012833746000069368,
++        0.01314198000000033,
++        0.012765054999817949,
++        0.013845003999904293,
++        0.01406607199987775,
++        0.013198197000292566,
++        0.01299748900009945,
++        0.012516174999746,
++        0.012100030999590672,
++        0.014234923999993043
++      ],
++      "median_s": 0.01314198000000033,
++      "min_s": 0.011884045000442711,
++      "max_s": 0.021279428000070766,
++      "output_sha256": "33565623f8293df023be63911c0c8571c14ab826d6e33cbc6076dfbd1c6a678b",
++      "output_bytes": 116681,
++      "peak_traced_bytes": 1998478
++    },
++    {
++      "name": "04_link_range-snapshot-34680",
++      "samples_s": [
++        0.029339108999920427,
++        0.031084096000085992,
++        0.030312696000237338,
++        0.02937225400000898,
++        0.029124835000402527,
++        0.031031632000122045,
++        0.0321287020001364,
++        0.02831305500012604,
++        0.030306080000173097,
++        0.031404723999912676,
++        0.030316648999814788,
++        0.030763966999984405,
++        0.03484590800007936,
++        0.029612828000153968,
++        0.029903963999913685,
++        0.030465360999642144,
++        0.028482380000241392,
++        0.029031237000253896,
++        0.029702642999836826,
++        0.03161269599968364,
++        0.028503533999810315
++      ],
++      "median_s": 0.030306080000173097,
++      "min_s": 0.02831305500012604,
++      "max_s": 0.03484590800007936,
++      "output_sha256": "d38f36076fa00528f6e5f876e5702d18ef20bf684cd49213e228ea8794e70a6b",
++      "output_bytes": 628363,
++      "peak_traced_bytes": 3559342
++    },
++    {
++      "name": "01_full_constellation-snapshot-0",
++      "samples_s": [
++        0.039376773000185494,
++        0.043485705999955826,
++        0.04337200400004804,
++        0.04507745499995508,
++        0.045450368000274466,
++        0.04067591600005471,
++        0.04068456999993941,
++        0.04566582899997229,
++        0.04321355999991283,
++        0.0468238990001737,
++        0.04296436000004178,
++        0.040786404000300536,
++        0.040815524000208825,
++        0.047396764000041,
++        0.04545948000031785,
++        0.04168191600001592,
++        0.041094116999829566,
++        0.04728248199990048,
++        0.04186487200013289,
++        0.04737759899990124,
++        0.03957229900015591
++      ],
++      "median_s": 0.04321355999991283,
++      "min_s": 0.039376773000185494,
++      "max_s": 0.047396764000041,
++      "output_sha256": "d0de4e2faf253c5b507b7dc7c25cdf1eef9ce285da37e2f909ce69c5e48a1882",
++      "output_bytes": 907666,
++      "peak_traced_bytes": 4971254
++    },
++    {
++      "name": "01_full_constellation-dynamic-3",
++      "samples_s": [
++        0.10989687899973433,
++        0.11250814400000309,
++        0.10828929600029369,
++        0.102308916000311,
++        0.10660550800002966,
++        0.10378742400007468,
++        0.11215921999973943,
++        0.1120936930001335,
++        0.10640984100018613,
++        0.10380454999994981,
++        0.10745815899963418,
++        0.10231406799994147,
++        0.10802956800034735,
++        0.11513465200005157,
++        0.10325379999994766,
++        0.09941862300001958,
++        0.1043819030001032,
++        0.10448107599995637,
++        0.10740759800000887,
++        0.10480557600021712,
++        0.10921269399977973
++      ],
++      "median_s": 0.10660550800002966,
++      "min_s": 0.09941862300001958,
++      "max_s": 0.11513465200005157,
++      "output_sha256": "03d77068afe742b835e3e976dce5dda6a88dc04d857f8323d0c41edd2e7018c3",
++      "output_bytes": 630896,
++      "peak_traced_bytes": 4200182
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.pytest_cache' /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/performance-results/round3/before-summary.json /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/performance-results/round3/before-summary.json
+--- /mnt/data/cosmo_opt_round3/baseline_final/cosmo_satellite/backend/docs/performance-results/round3/before-summary.json	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/cosmo_opt_round3/cosmo_satellite/backend/docs/performance-results/round3/before-summary.json	2026-09-13 13:32:19.696552165 +0000
+@@ -0,0 +1,214 @@
++{
++  "environment": {
++    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
++    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
++    "processor": "",
++    "cpu_count": 5,
++    "dependencies": {
++      "networkx": "3.6.1",
++      "pydantic": "2.13.4",
++      "fastapi": "0.128.2"
++    }
++  },
++  "method": {
++    "repeats": 21,
++    "warmups": 1,
++    "frames": 3,
++    "plan": "api_service.app._static_plan: all 3 strategies, resilience and failure impacts",
++    "timing": "perf_counter, fresh model each iteration; JSON serialization after timing"
++  },
++  "workloads": [
++    {
++      "name": "01_full_constellation-snapshot-34680",
++      "samples_s": [
++        0.18579666300001918,
++        0.1747304779996739,
++        0.16398047400025462,
++        0.16256676900002276,
++        0.17881916999976966,
++        0.16488398000001325,
++        0.17974891399990156,
++        0.16816211000013936,
++        0.1768836299997929,
++        0.16560700599984557,
++        0.1698260980001578,
++        0.17209250499990958,
++        0.1662699599996813,
++        0.167081502000201,
++        0.1711355329998696,
++        0.16616069300016534,
++        0.1640454410003258,
++        0.1644927010001993,
++        0.1640008620001936,
++        0.16896456099993884,
++        0.16814671099973566
++      ],
++      "median_s": 0.16814671099973566,
++      "min_s": 0.16256676900002276,
++      "max_s": 0.18579666300001918,
++      "output_sha256": "affc1a1d9225354e534cdf1a63e721b6cf34fcb2c056e7926529a81caaaad9d2",
++      "output_bytes": 817505,
++      "peak_traced_bytes": 11554294
++    },
++    {
++      "name": "02_first_launch-snapshot-34680",
++      "samples_s": [
++        0.007006191000073159,
++        0.006525458999931288,
++        0.006192328999986785,
++        0.006246596999972098,
++        0.006548799000029248,
++        0.0059056049999526294,
++        0.007463759000074788,
++        0.006253216000004613,
++        0.006171497999730491,
++        0.006047341999874334,
++        0.005896765999750642,
++        0.006385523000062676,
++        0.006169125999804237,
++        0.0062301809998643876,
++        0.005734502999985125,
++        0.006612763000248378,
++        0.006908112000019173,
++        0.006519309999930556,
++        0.006437981000090076,
++        0.006805846000133897,
++        0.0064550489996690885
++      ],
++      "median_s": 0.006385523000062676,
++      "min_s": 0.005734502999985125,
++      "max_s": 0.007463759000074788,
++      "output_sha256": "57111e369d66ba9de2486fbf151a051f079778912ffd1f9984f0233bfb86bd0a",
++      "output_bytes": 56029,
++      "peak_traced_bytes": 759584
++    },
++    {
++      "name": "03_satellite_outages-snapshot-34680",
++      "samples_s": [
++        0.019482712999888463,
++        0.019265390999862575,
++        0.019374032000087027,
++        0.01889628899971285,
++        0.01911358300003485,
++        0.02087182000013854,
++        0.02132408099987515,
++        0.020222149999881367,
++        0.01906583399977535,
++        0.019213458000194805,
++        0.01818987799970273,
++        0.020388528000239603,
++        0.019718061999810743,
++        0.021235131000139518,
++        0.019442040999820165,
++        0.019207227999686438,
++        0.023259258000052796,
++        0.019399482000153512,
++        0.021038790000147856,
++        0.019474671999887505,
++        0.020314128000336495
++      ],
++      "median_s": 0.019474671999887505,
++      "min_s": 0.01818987799970273,
++      "max_s": 0.023259258000052796,
++      "output_sha256": "33565623f8293df023be63911c0c8571c14ab826d6e33cbc6076dfbd1c6a678b",
++      "output_bytes": 116681,
++      "peak_traced_bytes": 1923142
++    },
++    {
++      "name": "04_link_range-snapshot-34680",
++      "samples_s": [
++        0.0828846889999113,
++        0.08487905399988449,
++        0.08542155399982221,
++        0.08673193799995715,
++        0.08449544199993397,
++        0.0832253949997721,
++        0.08451090800008387,
++        0.08456010500003686,
++        0.0880897100000766,
++        0.08615792699993108,
++        0.08905363700023372,
++        0.09391292500004056,
++        0.09016344700012269,
++        0.08649619300013,
++        0.08836286699988705,
++        0.09996302399986234,
++        0.1152296169998408,
++        0.08829176800009009,
++        0.12186860499969043,
++        0.08542939000017213,
++        0.08701340700008586
++      ],
++      "median_s": 0.08673193799995715,
++      "min_s": 0.0828846889999113,
++      "max_s": 0.12186860499969043,
++      "output_sha256": "d38f36076fa00528f6e5f876e5702d18ef20bf684cd49213e228ea8794e70a6b",
++      "output_bytes": 628363,
++      "peak_traced_bytes": 8459318
++    },
++    {
++      "name": "01_full_constellation-snapshot-0",
++      "samples_s": [
++        0.18032109299974763,
++        0.1752861169998141,
++        0.17770918299993355,
++        0.1738651010000467,
++        0.17782387099987318,
++        0.1790262630001962,
++        0.17767166599969642,
++        0.18260894100012592,
++        0.18088610499989954,
++        0.17518228099970656,
++        0.1763868259999981,
++        0.17225126500034094,
++        0.17594681699983994,
++        0.1767377240003043,
++        0.17907818000003317,
++        0.17143889099997978,
++        0.17725947600001746,
++        0.18290423700000247,
++        0.18676986000036777,
++        0.1789677860001575,
++        0.20229005200008032
++      ],
++      "median_s": 0.17770918299993355,
++      "min_s": 0.17143889099997978,
++      "max_s": 0.20229005200008032,
++      "output_sha256": "d0de4e2faf253c5b507b7dc7c25cdf1eef9ce285da37e2f909ce69c5e48a1882",
++      "output_bytes": 907666,
++      "peak_traced_bytes": 13560174
++    },
++    {
++      "name": "01_full_constellation-dynamic-3",
++      "samples_s": [
++        0.42394854700023643,
++        0.42745681499991406,
++        0.47164082900008,
++        0.4281833950003602,
++        0.4227495660002205,
++        0.4274476870000399,
++        0.43458114899976863,
++        0.42777982400002657,
++        0.4218836229997578,
++        0.4330941220000568,
++        0.4282903010002883,
++        0.42580186200029857,
++        0.41990332099976513,
++        0.42198082499999146,
++        0.4231700400000591,
++        0.42182324700024765,
++        0.4209928889999901,
++        0.42240949799997907,
++        0.4245148780000818,
++        0.4252261860001454,
++        0.4265906270002233
++      ],
++      "median_s": 0.4252261860001454,
++      "min_s": 0.41990332099976513,
++      "max_s": 0.47164082900008,
++      "output_sha256": "03d77068afe742b835e3e976dce5dda6a88dc04d857f8323d0c41edd2e7018c3",
++      "output_bytes": 630896,
++      "peak_traced_bytes": 12449472
++    }
++  ]
++}
+\ No newline at end of file

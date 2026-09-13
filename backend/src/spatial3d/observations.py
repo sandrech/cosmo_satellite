@@ -21,12 +21,19 @@ class SphericalGroundObservationModel:
         ground_id: str,
         satellite_id: str,
     ) -> GroundObservation:
-        delta = satellite_position - ground_position
-        distance = delta.norm()
+        gx = ground_position.x
+        gy = ground_position.y
+        gz = ground_position.z
+        dx = satellite_position.x - gx
+        dy = satellite_position.y - gy
+        dz = satellite_position.z - gz
+        distance_squared = dx * dx + dy * dy + dz * dz
+        distance = math.sqrt(distance_squared)
         if distance == 0.0:
             elevation = 90.0
         else:
-            sine = delta.dot(ground_position) / (distance * body.radius_km)
+            dot = dx * gx + dy * gy + dz * gz
+            sine = dot / (distance * body.radius_km)
             sine = max(-1.0, min(1.0, sine))
             elevation = math.degrees(math.asin(sine))
         return GroundObservation(ground_id, satellite_id, elevation, distance)
@@ -39,13 +46,23 @@ class SegmentInterSatelliteObservationModel:
     def observe(self, a: SatelliteState, b: SatelliteState) -> InterSatelliteObservation:
         left = a.position.earth_fixed_km
         right = b.position.earth_fixed_km
-        delta = right - left
-        distance = delta.norm()
-        denominator = delta.norm_squared()
+        lx = left.x
+        ly = left.y
+        lz = left.z
+        dx = right.x - lx
+        dy = right.y - ly
+        dz = right.z - lz
+        denominator = dx * dx + dy * dy + dz * dz
+        distance = math.sqrt(denominator)
         if denominator == 0.0:
-            closest = left.norm()
+            closest = math.sqrt(lx * lx + ly * ly + lz * lz)
         else:
-            q = -left.dot(delta) / denominator
+            q = -(lx * dx + ly * dy + lz * dz) / denominator
             q = max(0.0, min(1.0, q))
-            closest = (left + delta * q).norm()
+            closest_x = lx + dx * q
+            closest_y = ly + dy * q
+            closest_z = lz + dz * q
+            closest = math.sqrt(
+                closest_x * closest_x + closest_y * closest_y + closest_z * closest_z
+            )
         return InterSatelliteObservation(a.id, b.id, distance, closest)
